@@ -1,4 +1,4 @@
-use std::str::{from_utf8, FromStr};
+use std::str::{from_utf8};
 
 use risc0_zkvm::guest::env;
 use rustreexo::accumulator::node_hash::NodeHash;
@@ -11,8 +11,7 @@ use bitcoin_hashes::Hash;
 use bitcoin::key::{UntweakedPublicKey};
 use bitcoin::{Amount, ScriptBuf, Transaction, BlockHash, TapNodeHash, TapTweakHash, TxOut, WitnessVersion, XOnlyPublicKey};
 use bitcoin::script::{Builder, PushBytes};
-use bitcoin::consensus::encode::serialize;
-use bitcoin::consensus::{deserialize, Encodable};
+use bitcoin::consensus::Encodable;
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
