@@ -63,6 +63,7 @@ fn main() {
     // read the input
     let msg_bytes: Vec<u8> = env::read();
     let priv_key: schnorr::SigningKey = env::read();
+    let leaf_hash: NodeHash = env::read();
     let s: Stump = env::read();
     let proof: Proof = env::read();
     let sig_bytes: Vec<u8> = env::read();
@@ -77,15 +78,8 @@ fn main() {
         script_pubkey,
     };
 
-    let serialized_txout = serialize(&utxo);
-
-    let mut hasher = Sha512_256::new();
-    hasher.update(&serialized_txout);
-    let result = hasher.finalize();
-    let myhash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
-
     // Assert it is in the set.
-    assert_eq!(s.verify(&proof, &[myhash]), Ok(true));
+    assert_eq!(s.verify(&proof, &[leaf_hash]), Ok(true));
 
     let mut hasher = Sha512_256::new();
     hasher.update(&priv_key.to_bytes());

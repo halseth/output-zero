@@ -17,12 +17,10 @@ use rustreexo::accumulator::stump::Stump;
 use std::str::FromStr;
 use std::time::SystemTime;
 
-use bitcoin::address::Payload;
-use bitcoin::consensus::encode::serialize;
 use bitcoin::consensus::{deserialize, Encodable};
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing};
-use bitcoin::{Address, Amount, BlockHash, Network, ScriptBuf, Transaction, TxOut};
+use bitcoin::{Address, BlockHash, Network, ScriptBuf, Transaction};
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::proof::Proof;
@@ -89,25 +87,6 @@ struct CliProof {
 struct CliStump {
     pub roots: Vec<String>,
     pub leaves: u64,
-}
-
-fn create_nodehash(script_buf: ScriptBuf) -> NodeHash {
-    // Simple node hash representation: hash the script pubkey. In a real application one would use
-    // the regular utreexo serialization, which contains more info about the UTXO.
-    let txout = TxOut {
-        value: Amount::ZERO,
-        script_pubkey: script_buf,
-    };
-
-    // Serialize the TxOut using bitcoin::consensus::encode::serialize
-    let serialized_txout = serialize(&txout);
-    let mut hasher = Sha512_256::new();
-    hasher.update(&serialized_txout);
-
-    let result = hasher.finalize();
-    let hash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
-
-    hash
 }
 
 fn main() {
@@ -257,6 +236,8 @@ fn main() {
         .write(&msg_bytes)
         .unwrap()
         .write(&priv_key)
+        .unwrap()
+        .write(&leaf_hash)
         .unwrap()
         .write(&acc)
         .unwrap()
