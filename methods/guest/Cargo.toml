@@ -13,6 +13,7 @@ bitcoin = { version = "0.32.2", features = ["serde"] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 sha2 = "0.10.8"
 k256 = { version = "=0.13.3", features = ["arithmetic", "serde", "expose-field", "std", "ecdsa", "pkcs8", "schnorr"], default-features = false }
+bitcoin_hashes = "0.14.0"
 
 [patch.crates-io]
 # Placing these patch statement in the workspace Cargo.toml will add RISC Zero SHA-256 and bigint

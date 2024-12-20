@@ -245,6 +245,14 @@ fn main() {
         .unwrap()
         .write(&sig_bytes.as_slice())
         .unwrap()
+        .write(&tx)
+        .unwrap()
+        .write(&vout)
+        .unwrap()
+        .write(&block_height)
+        .unwrap()
+        .write(&block_hash)
+        .unwrap()
         .build()
         .unwrap();
 
