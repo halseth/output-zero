@@ -65,7 +65,6 @@ fn main() {
     // read the input
     let msg_bytes: Vec<u8> = env::read();
     let priv_key: schnorr::SigningKey = env::read();
-    let leaf_hash: NodeHash = env::read();
     let s: Stump = env::read();
     let proof: Proof = env::read();
     let sig_bytes: Vec<u8> = env::read();
@@ -76,8 +75,7 @@ fn main() {
     let block_hash: BlockHash = env::read();
 
     let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
-    let lh = NodeHash::from(lh);
-    assert_eq!(lh, leaf_hash);
+    let leaf_hash = NodeHash::from(lh);
 
     let internal_key = priv_key.verifying_key();
 

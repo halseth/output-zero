@@ -239,8 +239,6 @@ fn main() {
         .unwrap()
         .write(&priv_key)
         .unwrap()
-        .write(&leaf_hash)
-        .unwrap()
         .write(&acc)
         .unwrap()
         .write(&proof)
