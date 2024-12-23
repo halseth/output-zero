@@ -84,10 +84,9 @@ fn main() {
     // We'll check that the given public key corresponds to an output in the utxo set.
     let pubx = XOnlyPublicKey::from_slice(internal_key.to_bytes().as_slice()).unwrap();
     let script_pubkey = new_p2tr(pubx, None);
-    let utxo = TxOut {
-        value: Amount::ZERO,
-        script_pubkey,
-    };
+
+    // assert internal key is in tx used to calc leaf hash
+    assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
 
     // Assert it is in the set.
     assert_eq!(s.verify(&proof, &[leaf_hash]), Ok(true));

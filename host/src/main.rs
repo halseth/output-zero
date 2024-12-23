@@ -198,6 +198,8 @@ fn main() {
     let priv_key = schnorr::SigningKey::from_bytes(&priv_bytes).unwrap();
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
 
+    assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
+
     println!("proving {}", leaf_hash);
     println!("proof: {:?}", proof);
     assert_eq!(acc.verify(&proof, &[leaf_hash]), Ok(true));
