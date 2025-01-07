@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 methods = { path = "../methods" }
 shared = { path = "../shared" }
-risc0-zkvm = { version = "1.0.5" }
+risc0-zkvm = { version = "1.2.0"}
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = "1.0"
 rustreexo = { version = "0.3.0", features = ["with-serde"] }
@@ -18,3 +18,7 @@ sha2 = "0.10.8"
 bitcoin_hashes = "0.14.0"
 k256 = { version = "0.13.3", features = ["serde"] }
 serde_json = "1.0.128"
+
+[features]
+cuda = ["risc0-zkvm/cuda"]
+default = []
