@@ -15,12 +15,14 @@ Examples are:
 - etc
 
 ## Architecture 
-The tool works with the UTXO set dump from Bitcoin Core. It uses this dump to
-create a [Utreexo](https://dci.mit.edu/utreexo) representation of the UTXO set
-and a proof for inclusion of the given UTXO in this set.
+The tool works with accumulators and proofs from a
+[Utreexo](https://dci.mit.edu/utreexo) client. In the examples we will be using
+the [rpc-utreexo-bridge](https://github.com/Davidson-Souza/rpc-utreexo-bridge),
+which acts as a utreexo bridge to Bitcoin Core.
 
-The prover then signs a message using the private key for the output with
-public key `P`, proving that he controls the coins. 
+After being given the utreexo accumulator and proof, the prover signs a message
+using the private key for the output with public key `P`, proving that he
+controls the coins. 
 
 The prover then creates a ZK-STARK proof using the [Risc0 ZKVM](https://github.com/risc0/risc0) 
 that proves the following:
@@ -30,8 +32,8 @@ that proves the following:
 - The prover has a proof showing that the public key P is found in the Utreexo
   set. The Utreexo root is shown to the verifier.
 
-The STARK proof this is convincing the verifier that the prover has the private
-key to the output in the UTXO set.
+This ZK-proof is convincing the verifier that the prover has the private key to
+the output in the UTXO set.
 
 ## Quick start
 
@@ -39,48 +41,72 @@ key to the output in the UTXO set.
 Install the `risc0` toolchain: https://github.com/risc0/risc0?tab=readme-ov-file#getting-started
 
 ### Proof creation
-Create an address to send some testnet3 coins to:
+Set ut a Bitcoin Core node running on signet, and remember to activate txindex:
+```
+$ bitcoind --signet --txindex
+```
+
+Now we set ut a utreexo bridge that will index the chain and create the inclusion proofs we need:
+- Install the bridge according to
+  [rpc-utreexo-bridge](https://github.com/Davidson-Souza/rpc-utreexo-bridge).
+- Set environment variables to match the bitcoind instance: 
+
+```
+$ BITCOIN_CORE_RPC_URL="..."
+$ BITCOIN_CORE_COOKIE_FILE="[..]/.cookie"
+```
+
+Start the bridge and let it index while you continue to the next step:
+```
+ $ bridge --network signet
+```
+
+Now we can create an address using OutputZero, and send som signet coins to it:
+
 ```bash
 $ cargo run --release -- --priv-key "new"
-priv: 4b55c185428041cff1d3cf9044ad18c14fa79a927fa242d2b6ee7582f59b9581
-pub: 1fa2ab3dfcdeaba8d8253c6e7ef49135f36cb4c4c8515c5579f3010e2999e3b5
-address: tb1p7677cydywmtk67vfvxrwlh2g7g4cz7ha4z6x6v4u4kj8xyyu3n0srfaj4g
+priv: 6fc5d9e0dcd0cad79cea037a28850abe4a661d7a2c2de72311feea912acc5dbf
+pub: bd70caa34056cc4bb2b66f44e038c52f1f87f4fb20703f6209617bb58a032a5d
+address: tb1pnpvxrjhlwzn7rfggv2tvx508tuvha38ez3x993r865cxcn3xrexqn9t6jl
 ```
 
-You can now fund the given address with some tBTC, then wait for the
+You can now fund the given address with some signetBTC, then wait for the
 transaction to confirm and Bitcoin Core to sync to the block (feel free to use
-the above private key for testing, but please don't spend the coins).
+the above private key or deposit tx for testing, but please don't spend the coins).
 
-Now get a dump of the UTXO set from the Bitcoin Core: 
+After having the coins confirmed, we will get the utreexo accumulator and
+proofs from the bridge (TODO: show how to get leaf hash):
 
-```bash
-$ bitcoin-cli -testnet dumptxoutset testnet_utxoset.dat
+```
+$ curl http://127.0.0.1:3000/prove/3baea3c5fbc3afb0ec11379416a68a1e2a64df318ea611f58213e87c50d8ccd1 | jq -c '.data' > proof.json
+$ curl http://127.0.0.1:3000/acc | jq -c '.data' > acc.json
+$ bitcoin-cli --signet getrawtransaction 48356de0a84cd6022ff84a70f805922ec7c799c1a01d683b8c906d38824e71e2 > tx.hex
 ```
 
-This will take few minutes, as the UTXO is rather large. But now we got what we
-need to run `utxozkp`, and presumably our output is contained in it (replace
-folder with Bitcoin Core directory):
+Now we can run OutputZero with these proofs, in addition to some metadata about the tx and block it confirmed in:
 
 ```bash
-$$  cargo run --release -- --utxoset-file "<path_to_bitcoin>/testnet3/testnet_utxoset.dat" --priv-key "4b55c185428041cff1d3cf9044ad18c14fa79a927fa242d2b6ee7582f59b9581" --msg "messsage to sign" --receipt-file receipt.bin --utreexo-file utreexo_stump.bin --prove
+$ cargo run --release -- --utreexo-acc "`cat acc.json`" --utreexo-proof "`cat proof.json`" --leaf-hash '3baea3c5fbc3afb0ec11379416a68a1e2a64df318ea611f58213e87c50d8ccd1' --prove --priv-key '6fc5d9e0dcd0cad79cea037a28850abe4a661d7a2c2de72311feea912acc5dbf' --receipt-file 'receipt.bin'  --msg 'this is message' --tx-hex "`cat tx.hex`" --vout 1 --block-height 226735 --block-hash '00000019cfb5ef098766c4602dbfbb7351ad61a71c2f451d80feb2eb65563b63'
 ```
 
-This command will read the UTXO set, and create a ZK proof as detailed in the
-Architecture section. The `receipt.bin` file contains this proof, while the
-`utreexo_stump.bin` file contains the Utreexo roots (these can be independently
-created by the verifier).
-
+This command will create a ZK proof as detailed in the Architecture section.
+The `receipt.bin` file contains this proof, that can be checked by any verifier
+independently.
 
 ### Verification
 The proof can be verified using
 
 ```bash
-$ cargo run --release -- --msg "messsage to sign" --receipt-file receipt.bin --utreexo-file utreexo_stump.bin 
+cargo run --release -- --utreexo-acc "`cat acc.json`"  --receipt-file 'receipt.bin'  --msg 'this is message'
 ```
 
+Note that the the accumulator needed to verify the proof is the same one needed
+to create it. But since utreexo accumulators are deterministic, it can be
+independently created by the verifier as long as it is communicated which block
+height one is using when creating the proof.
+
 ## Benchmarks, Apple M1 Max
-- Proving time is about 48 seconds (not counting loading the UTXO set into
-  memory).
+- Proving time is about 48 seconds.
 - Verification time is ~254 ms.
 - Proof size is 1.4 MB.
 

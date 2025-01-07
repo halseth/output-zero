@@ -4,30 +4,26 @@ use std::fs::File;
 use methods::{METHOD_ELF, METHOD_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
 
-use sha2::{Digest, Sha512_256};
-use std::io::Write;
-
 use bitcoin_hashes::sha256;
 use bitcoin_hashes::Hash as BitcoinHash;
 
 use clap::Parser;
-use txoutset::{ComputeAddresses, Dump};
 
 use rustreexo::accumulator::node_hash::NodeHash;
 use rustreexo::accumulator::stump::Stump;
 use std::str::FromStr;
 use std::time::SystemTime;
 
-use bitcoin::address::Payload;
-use bitcoin::consensus::encode::serialize;
+use bitcoin::consensus::{deserialize};
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing};
-use bitcoin::WitnessVersion::V1;
-use bitcoin::{Address, Amount, Network, ScriptBuf, TxOut};
+use bitcoin::{Address, BlockHash, Network, ScriptBuf, Transaction};
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
-use rustreexo::accumulator::pollard::Pollard;
-use Payload::WitnessProgram;
+use rustreexo::accumulator::proof::Proof;
+use serde::{Deserialize, Serialize};
+
+use shared::get_leaf_hashes;
 
 fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
     let sk = SecretKey::new(&mut rand::thread_rng());
@@ -38,10 +34,6 @@ fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
 #[derive(Debug, Parser)]
 #[command(verbatim_doc_comment)]
 struct Args {
-    /// File containing the results of Bitcoin Core RPC `dumptxoutset`
-    #[arg(short, long)]
-    utxoset_file: Option<String>,
-
     #[arg(short, long, default_value_t = false)]
     prove: bool,
 
@@ -49,8 +41,26 @@ struct Args {
     #[arg(short, long)]
     receipt_file: Option<String>,
 
-    #[arg(short, long)]
-    utreexo_file: Option<String>,
+    #[arg(long)]
+    utreexo_proof: Option<String>,
+
+    #[arg(long)]
+    utreexo_acc: Option<String>,
+
+    #[arg(long)]
+    leaf_hash: Option<String>,
+
+    #[arg(long)]
+    tx_hex: Option<String>,
+
+    #[arg(long)]
+    block_height: Option<u32>,
+
+    #[arg(long)]
+    block_hash: Option<String>,
+
+    #[arg(long)]
+    vout: Option<u32>,
 
     /// Message to sign.
     #[arg(short, long)]
@@ -58,7 +68,7 @@ struct Args {
 
     /// Sign the message using the given private key. Pass "new" to generate one at random. Leave
     /// this blank if verifying a receipt.
-    #[arg(short, long)]
+    #[arg(long)]
     priv_key: Option<String>,
 
     /// Network to use.
@@ -66,23 +76,16 @@ struct Args {
     network: Network,
 }
 
-fn create_nodehash(script_buf: ScriptBuf) -> NodeHash {
-    // Simple node hash representation: hash the script pubkey. In a real application one would use
-    // the regular utreexo serialization, which contains more info about the UTXO.
-    let txout = TxOut {
-        value: Amount::ZERO,
-        script_pubkey: script_buf,
-    };
+#[derive(Deserialize, Serialize)]
+struct CliProof {
+    pub targets: Vec<u64>,
+    pub hashes: Vec<String>,
+}
 
-    // Serialize the TxOut using bitcoin::consensus::encode::serialize
-    let serialized_txout = serialize(&txout);
-    let mut hasher = Sha512_256::new();
-    hasher.update(&serialized_txout);
-
-    let result = hasher.finalize();
-    let hash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
-
-    hash
+#[derive(Deserialize, Serialize)]
+struct CliStump {
+    pub roots: Vec<String>,
+    pub leaves: u64,
 }
 
 fn main() {
@@ -128,14 +131,22 @@ fn main() {
         }
     };
 
-    let (receipt_file, stump_file) = if args.prove {
+    let receipt_file = if args.prove {
         let r = File::create(args.receipt_file.unwrap()).unwrap();
-        let s = File::create(args.utreexo_file.unwrap()).unwrap();
-        (r, s)
+        r
     } else {
         let r = File::open(args.receipt_file.unwrap()).unwrap();
-        let s = File::open(args.utreexo_file.unwrap()).unwrap();
-        (r, s)
+        r
+    };
+
+    let acc: CliStump = serde_json::from_str(&args.utreexo_acc.unwrap()).unwrap();
+    let acc = Stump {
+        leaves: acc.leaves,
+        roots: acc
+            .roots
+            .into_iter()
+            .map(|root| NodeHash::from_str(&root).expect("invalid hash"))
+            .collect(),
     };
 
     let start_time = SystemTime::now();
@@ -143,8 +154,7 @@ fn main() {
     // If not proving, simply verify the passed receipt using the loaded utxo set.
     if !args.prove {
         let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
-        let s: Stump = bincode::deserialize_from(stump_file).unwrap();
-        verify_receipt(&receipt, &s);
+        verify_receipt(&receipt, &acc);
         println!("receipt verified in {:?}", start_time.elapsed().unwrap());
         return;
     }
@@ -155,88 +165,43 @@ fn main() {
     let digest_bytes = digest.to_byte_array();
     let msg = Message::from_digest(digest_bytes);
 
-    // Our Utreexo accumulator.
-    let mut p = Pollard::new();
-
-    let compute_addresses = ComputeAddresses::Yes(network);
-    match Dump::new(&args.utxoset_file.unwrap(), compute_addresses) {
-        Ok(dump) => {
-            println!(
-                "Dump opened.\n Block Hash: {}\n UTXO Set Size: {}",
-                dump.block_hash, dump.utxo_set_size
-            );
-
-            let mut i = 0;
-            let n = dump.utxo_set_size;
-            let mut num_taproot = 0;
-            for item in dump {
-                i += 1;
-
-                if i % 500000 == 0 {
-                    println!(
-                        "{}/{} ({:.2}%)\ttaproot: {}/{} ({:.2}%)",
-                        i,
-                        n,
-                        100.0 * (i as f64) / (n as f64),
-                        num_taproot,
-                        i,
-                        100.0 * (num_taproot as f64) / (i as f64)
-                    );
-                }
-
-                match item.address {
-                    Some(ref address) => {
-                        let payload = address.payload();
-
-                        // We only care about taproot outputs.
-                        match payload {
-                            WitnessProgram(w) => {
-                                if w.version() == V1 {
-                                    let hash = create_nodehash(item.script_pubkey);
-                                    p.modify(&[hash], &[]).unwrap();
-                                    num_taproot += 1;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Err(e) => {
-            _ = writeln!(std::io::stderr(), "{}", e);
-            return;
-        }
-    }
-
-    println!("Reading UTXO dump took {:?}", start_time.elapsed().unwrap());
-
-    let roots = p
-        .get_roots()
-        .iter()
-        .map(|root| root.get_data())
-        .collect::<Vec<_>>();
-
-    // Create a lightweight stump to use int the ZK environment.
-    let s = Stump {
-        roots,
-        leaves: p.leaves,
+    let proof: CliProof = serde_json::from_str(&args.utreexo_proof.unwrap()).unwrap();
+    let proof = Proof {
+        targets: proof.targets,
+        hashes: proof
+            .hashes
+            .into_iter()
+            .map(|root| NodeHash::from_str(&root).expect("invalid hash"))
+            .collect(),
     };
+
+    let leaf_hash = NodeHash::from_str(&args.leaf_hash.unwrap()).unwrap();
+
+    let tx_bytes = hex::decode(&args.tx_hex.unwrap()).unwrap();
+    let tx: Transaction = deserialize(&tx_bytes).unwrap();
+
+    let vout = args.vout.unwrap();
+    let block_height = args.block_height.unwrap();
+    let block_hash: BlockHash = BlockHash::from_str(&args.block_hash.unwrap()).unwrap();
+
+    let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
+    println!("lh: {:?}", lh);
+
+    let lh = NodeHash::from(lh);
+
+    assert_eq!(lh, leaf_hash);
 
     // We will prove inclusion in the UTXO set of the key we control.
     let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
     let priv_bytes = keypair.unwrap().secret_key().secret_bytes();
     let priv_key = schnorr::SigningKey::from_bytes(&priv_bytes).unwrap();
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
-    let myhash = create_nodehash(script_pubkey);
 
-    println!("proving {}", myhash);
-    let proof = p.prove(&[myhash]).unwrap();
+    assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
+
+    println!("proving {}", leaf_hash);
     println!("proof: {:?}", proof);
-    assert_eq!(p.verify(&proof, &[myhash]), Ok(true));
-    println!("pollard proof verified");
-    assert_eq!(s.verify(&proof, &[myhash]), Ok(true));
+    assert_eq!(acc.verify(&proof, &[leaf_hash]), Ok(true));
     println!("stump proof verified");
 
     // Sign using the tweaked key.
@@ -273,11 +238,19 @@ fn main() {
         .unwrap()
         .write(&priv_key)
         .unwrap()
-        .write(&s)
+        .write(&acc)
         .unwrap()
         .write(&proof)
         .unwrap()
         .write(&sig_bytes.as_slice())
+        .unwrap()
+        .write(&tx)
+        .unwrap()
+        .write(&vout)
+        .unwrap()
+        .write(&block_height)
+        .unwrap()
+        .write(&block_hash)
         .unwrap()
         .build()
         .unwrap();
@@ -293,13 +266,12 @@ fn main() {
     // extract the receipt.
     let receipt = prove_info.receipt;
 
-    verify_receipt(&receipt, &s);
+    verify_receipt(&receipt, &acc);
 
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
     println!("receipt ({})", receipt_bytes.len(),);
 
     bincode::serialize_into(receipt_file, &receipt).unwrap();
-    bincode::serialize_into(stump_file, &s).unwrap();
 }
 
 fn verify_receipt(receipt: &Receipt, s: &Stump) {

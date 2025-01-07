@@ -1,4 +1,4 @@
-use std::str::{from_utf8, FromStr};
+use std::str::{from_utf8};
 
 use risc0_zkvm::guest::env;
 use rustreexo::accumulator::node_hash::NodeHash;
@@ -7,12 +7,13 @@ use rustreexo::accumulator::stump::Stump;
 use sha2::{Digest, Sha512_256};
 
 use bitcoin::key::{UntweakedPublicKey};
-use bitcoin::{Amount, ScriptBuf, TapNodeHash, TapTweakHash, TxOut, WitnessVersion, XOnlyPublicKey};
+use bitcoin::{ScriptBuf, Transaction, BlockHash, TapNodeHash, TapTweakHash, WitnessVersion, XOnlyPublicKey};
 use bitcoin::script::{Builder, PushBytes};
-use bitcoin::consensus::encode::serialize;
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+
+use shared::get_leaf_hashes;
 
 pub fn new_p2tr(
     internal_key: UntweakedPublicKey,
@@ -67,25 +68,25 @@ fn main() {
     let proof: Proof = env::read();
     let sig_bytes: Vec<u8> = env::read();
 
+    let tx: Transaction = env::read();
+    let vout: u32 = env::read();
+    let block_height: u32 = env::read();
+    let block_hash: BlockHash = env::read();
+
+    let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
+    let leaf_hash = NodeHash::from(lh);
+
     let internal_key = priv_key.verifying_key();
 
     // We'll check that the given public key corresponds to an output in the utxo set.
     let pubx = XOnlyPublicKey::from_slice(internal_key.to_bytes().as_slice()).unwrap();
     let script_pubkey = new_p2tr(pubx, None);
-    let utxo = TxOut {
-        value: Amount::ZERO,
-        script_pubkey,
-    };
 
-    let serialized_txout = serialize(&utxo);
-
-    let mut hasher = Sha512_256::new();
-    hasher.update(&serialized_txout);
-    let result = hasher.finalize();
-    let myhash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
+    // assert internal key is in tx used to calc leaf hash
+    assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
 
     // Assert it is in the set.
-    assert_eq!(s.verify(&proof, &[myhash]), Ok(true));
+    assert_eq!(s.verify(&proof, &[leaf_hash]), Ok(true));
 
     let mut hasher = Sha512_256::new();
     hasher.update(&priv_key.to_bytes());
