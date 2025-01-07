@@ -4,9 +4,6 @@ use std::fs::File;
 use methods::{METHOD_ELF, METHOD_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
 
-use sha2::{Digest};
-use std::io::Write;
-
 use bitcoin_hashes::sha256;
 use bitcoin_hashes::Hash as BitcoinHash;
 

@@ -29,14 +29,14 @@ pub fn get_leaf_hashes(
     } else {
         header_code
     };
-    let txid = transaction.txid();
+    let txid = transaction.compute_txid();
     println!("txid: {txid}, block_hash: {block_hash} vout: {vout} height: {height}");
 
     let leaf_hash = Sha512_256::new()
         .chain_update(UTREEXO_TAG_V1)
         .chain_update(UTREEXO_TAG_V1)
         .chain_update(block_hash)
-        .chain_update(transaction.txid())
+        .chain_update(txid)
         .chain_update(vout.to_le_bytes())
         .chain_update(header_code.to_le_bytes())
         .chain_update(ser_utxo)

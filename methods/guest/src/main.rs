@@ -6,12 +6,9 @@ use rustreexo::accumulator::proof::Proof;
 use rustreexo::accumulator::stump::Stump;
 use sha2::{Digest, Sha512_256};
 
-use bitcoin_hashes::sha256;
-use bitcoin_hashes::Hash;
 use bitcoin::key::{UntweakedPublicKey};
-use bitcoin::{Amount, ScriptBuf, Transaction, BlockHash, TapNodeHash, TapTweakHash, TxOut, WitnessVersion, XOnlyPublicKey};
+use bitcoin::{ScriptBuf, Transaction, BlockHash, TapNodeHash, TapTweakHash, WitnessVersion, XOnlyPublicKey};
 use bitcoin::script::{Builder, PushBytes};
-use bitcoin::consensus::Encodable;
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
