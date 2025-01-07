@@ -302,8 +302,10 @@ fn main() {
 
     verify_receipt(&receipt, &acc);
 
+    let seal_size = receipt.seal_size();
+
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
-    println!("receipt ({})", receipt_bytes.len(),);
+    println!("receipt ({}). seal size: {seal_size}.", receipt_bytes.len());
 
     bincode::serialize_into(receipt_file, &receipt).unwrap();
 }
