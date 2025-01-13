@@ -12,8 +12,9 @@ use bitcoin::script::{Builder, PushBytes};
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::PublicKey;
 
-use shared::get_leaf_hashes;
+use shared::{get_leaf_hashes, verify_musig};
 
 pub fn new_p2tr(
     internal_key: UntweakedPublicKey,
@@ -72,6 +73,15 @@ fn main() {
     let vout: u32 = env::read();
     let block_height: u32 = env::read();
     let block_hash: BlockHash = env::read();
+    let musig_pubs: Vec<PublicKey> = env::read();
+    let musig_sig_bytes: Vec<u8> = env::read();
+    let musig_sig = schnorr::Signature::try_from(musig_sig_bytes.as_slice()).unwrap();
+
+    let msg = from_utf8(msg_bytes.as_slice()).unwrap();
+    assert_eq!(
+        verify_musig(musig_pubs.clone(), musig_sig.to_bytes(), &msg),
+        true,
+    );
 
     let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
     let leaf_hash = NodeHash::from(lh);
@@ -91,7 +101,6 @@ fn main() {
     let mut hasher = Sha512_256::new();
     hasher.update(&priv_key.to_bytes());
     let sk_hash = hex::encode(hasher.finalize());
-    let msg = from_utf8(msg_bytes.as_slice()).unwrap();
 
     let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
 
