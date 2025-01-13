@@ -14,7 +14,7 @@ use k256::schnorr::signature::Verifier;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::PublicKey;
 
-use shared::{get_leaf_hashes, verify_musig};
+use shared::{get_leaf_hashes, verify_musig, aggregate_keys};
 
 pub fn new_p2tr(
     internal_key: UntweakedPublicKey,
@@ -62,6 +62,13 @@ fn tap_tweak(
 }
 
 fn main() {
+    //TODO: take in nodeid1, nodeid2, bitcoinkey1, bitcoinkey2 need tweak?
+    // check combining bitcoin keys give a key that is in the UTXO set.
+    // combine all 4 keys and check that the signature is valid for the aggregate key
+    // How to avoid proof reuse? cannot do hash of priv key easily, since there are two nodes maybe
+    // do hash of the individual public keys? since they won't ever go onchain
+
+
     // read the input
     let msg_bytes: Vec<u8> = env::read();
     let priv_key: schnorr::SigningKey = env::read();
@@ -83,13 +90,17 @@ fn main() {
         true,
     );
 
+    // Aggregate the bitcoin keys.
+    let tap_pub = aggregate_keys(vec![musig_pubs[2], musig_pubs[3]]);
+    let ver_key = schnorr::VerifyingKey::try_from(tap_pub).unwrap();
+
     let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
     let leaf_hash = NodeHash::from(lh);
 
-    let internal_key = priv_key.verifying_key();
+//    let internal_key = priv_key.verifying_key();
 
     // We'll check that the given public key corresponds to an output in the utxo set.
-    let pubx = XOnlyPublicKey::from_slice(internal_key.to_bytes().as_slice()).unwrap();
+    let pubx = XOnlyPublicKey::from_slice(ver_key.to_bytes().as_slice()).unwrap();
     let script_pubkey = new_p2tr(pubx, None);
 
     // assert internal key is in tx used to calc leaf hash
@@ -102,11 +113,11 @@ fn main() {
     hasher.update(&priv_key.to_bytes());
     let sk_hash = hex::encode(hasher.finalize());
 
-    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
-
-    internal_key
-        .verify(msg_bytes.as_slice(), &schnorr_sig)
-        .expect("schnorr verification failed");
+//    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
+//
+//   ver_key
+//        .verify(msg_bytes.as_slice(), &schnorr_sig)
+//        .expect("schnorr verification failed");
 
     // write public output to the journal
     env::commit(&s);

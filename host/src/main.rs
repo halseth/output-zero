@@ -17,20 +17,20 @@ use std::time::SystemTime;
 use bitcoin::consensus::deserialize;
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing, Verification};
-use bitcoin::{Address, BlockHash, Network, PrivateKey, ScriptBuf, Transaction};
+use bitcoin::{Address, BlockHash, Network, PrivateKey, ScriptBuf, Transaction, XOnlyPublicKey};
 use clap::builder::TypedValueParser;
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::proof::Proof;
 use serde::{Deserialize, Serialize};
 
+use k256::PublicKey;
 use musig2::{
     AggNonce, FirstRound, KeyAggContext, PartialSignature, PubNonce, SecNonce, SecNonceSpices,
     SecondRound,
 };
-use k256::PublicKey;
 
-use shared::{get_leaf_hashes, verify_musig};
+use shared::{aggregate_keys, get_leaf_hashes, verify_musig};
 
 fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
     let sk = SecretKey::new(&mut rand::thread_rng());
@@ -132,6 +132,19 @@ fn extract_keypair<C: Signing + Verification>(
     keypair
 }
 
+fn address<C: Verification>(secp: &Secp256k1<C>, pubkey: PublicKey, network: Network) {
+    let verifying_key = schnorr::VerifyingKey::try_from(pubkey).unwrap();
+    //    let ver_key = schnorr::VerifyingKey{
+    //        inner: pubkey,
+    //    };
+    let pubx = XOnlyPublicKey::from_slice(verifying_key.to_bytes().as_slice()).unwrap();
+
+    let script_buf = ScriptBuf::new_p2tr(&secp, pubx, None);
+    let addr = Address::from_script(script_buf.as_script(), network).unwrap();
+    println!("pub: {}", pubx);
+    println!("address: {}", addr);
+}
+
 fn main() {
     // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
     tracing_subscriber::fmt()
@@ -160,18 +173,24 @@ fn main() {
         &msg_to_sign,
     );
 
-
     assert_eq!(
         verify_musig(musig_pubs.clone(), musig_sig, &msg_to_sign),
         true,
     );
 
-    if !verify_musig(musig_pubs.clone(), musig_sig, &msg_to_sign) {
-        println!("musig failed");
-        return;
-    }
+    let (musig_pubs2, musig_sig2) = create_musig(vec![kp_bitcoin1, kp_bitcoin2], &msg_to_sign);
 
     println!("musig successfully verified");
+
+    assert_eq!(
+        verify_musig(musig_pubs2.clone(), musig_sig2, &msg_to_sign),
+        true,
+    );
+
+    println!("musig with 2 pubs successfully verified");
+
+    let tap_key = aggregate_keys(musig_pubs2);
+    address(&secp, tap_key, network);
 
     // Generate a new keypair or use the given private key.
     let keypair = match args.priv_key.as_deref() {
@@ -296,9 +315,13 @@ fn main() {
     assert_eq!(lh, leaf_hash);
 
     // We will prove inclusion in the UTXO set of the key we control.
-    let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
+    //let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
     let priv_bytes = keypair.unwrap().secret_key().secret_bytes();
     let priv_key = schnorr::SigningKey::from_bytes(&priv_bytes).unwrap();
+
+    let verifying_key = schnorr::VerifyingKey::try_from(tap_key).unwrap();
+    let internal_key= XOnlyPublicKey::from_slice(verifying_key.to_bytes().as_slice()).unwrap();
+
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
 
     assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
@@ -411,6 +434,16 @@ fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64])
 
     let key_agg_ctx = KeyAggContext::new(pubs.clone()).unwrap();
 
+    for kp in keys.clone() {
+        //    let sk = bitcoin::secp256k1::SecretKey::from_str(&k).unwrap();
+        let bytes = kp.secret_key().secret_bytes();
+        let str = hex::encode(bytes);
+        println!("priv key: {}", str);
+        let scalar: musig2::secp::Scalar = str.parse().unwrap();
+        let p = scalar.base_point_mul();
+        key_agg_ctx.key_coefficient(p).unwrap();
+    }
+
     // This is the key which the group has control over.
     let aggregated_pubkey: PublicKey = key_agg_ctx.aggregated_pubkey();
 
@@ -436,7 +469,6 @@ fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64])
         public_nonces.push(our_public_nonce);
     }
 
-
     // We manually aggregate the nonces together and then construct our partial signature.
     let aggregated_nonce: AggNonce = public_nonces.iter().sum();
     let mut partial_signatures = Vec::new();
@@ -458,11 +490,9 @@ fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64])
         partial_signatures.push(our_partial_signature);
     }
 
-
     /// Signatures should be verified upon receipt and invalid signatures
     /// should be blamed on the signer who sent them.
     for (i, partial_signature) in partial_signatures.clone().into_iter().enumerate() {
-
         let their_pubkey: PublicKey = key_agg_ctx.get_pubkey(i).unwrap();
         let their_pubnonce = &public_nonces[i];
 
@@ -484,7 +514,6 @@ fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64])
         message,
     )
     .expect("error aggregating signatures");
-
 
     musig2::verify_single(aggregated_pubkey, &final_signature, message)
         .expect("aggregated signature must be valid");

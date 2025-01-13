@@ -7,7 +7,10 @@ use bitcoin::consensus::Encodable;
 use bitcoin::{BlockHash, Transaction};
 use k256::PublicKey;
 
-use musig2::{k256, AggNonce, FirstRound, KeyAggContext, PartialSignature, PubNonce, SecNonce, SecNonceSpices, SecondRound};
+use musig2::{
+    k256, AggNonce, FirstRound, KeyAggContext, PartialSignature, PubNonce, SecNonce,
+    SecNonceSpices, SecondRound,
+};
 
 pub const UTREEXO_TAG_V1: [u8; 64] = [
     0x5b, 0x83, 0x2d, 0xb8, 0xca, 0x26, 0xc2, 0x5b, 0xe1, 0xc5, 0x42, 0xd6, 0xcc, 0xed, 0xdd, 0xa8,
@@ -47,10 +50,15 @@ pub fn get_leaf_hashes(
     sha256::Hash::from_slice(leaf_hash.as_slice()).expect("parent_hash: Engines shouldn't be Err")
 }
 
-pub fn verify_musig(pubs: Vec<PublicKey>, sig: [u8; 64], message: &str) -> bool {
-
+pub fn aggregate_keys(pubs: Vec<PublicKey>) -> PublicKey {
     let key_agg_ctx = KeyAggContext::new(pubs.clone()).unwrap();
     let aggregated_pubkey: PublicKey = key_agg_ctx.aggregated_pubkey();
+
+    aggregated_pubkey
+}
+
+pub fn verify_musig(pubs: Vec<PublicKey>, sig: [u8; 64], message: &str) -> bool {
+    let aggregated_pubkey: PublicKey = aggregate_keys(pubs);
 
     musig2::verify_single(aggregated_pubkey, &sig, message)
         .expect("aggregated signature must be valid");
