@@ -71,10 +71,8 @@ fn main() {
 
     // read the input
     let msg_bytes: Vec<u8> = env::read();
-    let priv_key: schnorr::SigningKey = env::read();
     let s: Stump = env::read();
     let proof: Proof = env::read();
-    let sig_bytes: Vec<u8> = env::read();
 
     let tx: Transaction = env::read();
     let vout: u32 = env::read();
@@ -82,6 +80,7 @@ fn main() {
     let block_hash: BlockHash = env::read();
     let musig_pubs: Vec<PublicKey> = env::read();
     let musig_sig_bytes: Vec<u8> = env::read();
+
     let musig_sig = schnorr::Signature::try_from(musig_sig_bytes.as_slice()).unwrap();
 
     let msg = from_utf8(msg_bytes.as_slice()).unwrap();
@@ -91,13 +90,13 @@ fn main() {
     );
 
     // Aggregate the bitcoin keys.
-    let tap_pub = aggregate_keys(vec![musig_pubs[2], musig_pubs[3]]);
+    let bitcoin_key1 = musig_pubs[2];
+    let bitcoin_key2 = musig_pubs[3];
+    let tap_pub = aggregate_keys(vec![bitcoin_key1, bitcoin_key2]);
     let ver_key = schnorr::VerifyingKey::try_from(tap_pub).unwrap();
 
     let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
     let leaf_hash = NodeHash::from(lh);
-
-//    let internal_key = priv_key.verifying_key();
 
     // We'll check that the given public key corresponds to an output in the utxo set.
     let pubx = XOnlyPublicKey::from_slice(ver_key.to_bytes().as_slice()).unwrap();
@@ -109,18 +108,16 @@ fn main() {
     // Assert it is in the set.
     assert_eq!(s.verify(&proof, &[leaf_hash]), Ok(true));
 
-    let mut hasher = Sha512_256::new();
-    hasher.update(&priv_key.to_bytes());
-    let sk_hash = hex::encode(hasher.finalize());
+    let vk1 = schnorr::VerifyingKey::try_from(bitcoin_key1).unwrap();
+    let vk2 = schnorr::VerifyingKey::try_from(bitcoin_key2).unwrap();
 
-//    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
-//
-//   ver_key
-//        .verify(msg_bytes.as_slice(), &schnorr_sig)
-//        .expect("schnorr verification failed");
+    let mut hasher = Sha512_256::new();
+    hasher.update(&vk1.to_bytes());
+    hasher.update(&vk2.to_bytes());
+    let pk_hash = hex::encode(hasher.finalize());
 
     // write public output to the journal
     env::commit(&s);
-    env::commit(&sk_hash);
+    env::commit(&pk_hash);
     env::commit(&msg);
 }

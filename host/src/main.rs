@@ -76,11 +76,6 @@ struct Args {
     #[arg(short, long)]
     msg: Option<String>,
 
-    /// Sign the message using the given private key. Pass "new" to generate one at random. Leave
-    /// this blank if verifying a receipt.
-    #[arg(long)]
-    priv_key: Option<String>,
-
     #[arg(long)]
     node_key_1: Option<String>,
 
@@ -156,7 +151,6 @@ fn main() {
     let secp = Secp256k1::new();
     let network = args.network;
 
-
     println!("node_key_1:");
     let kp_node1 = extract_keypair(&secp, args.node_key_1.unwrap().as_str(), network);
     println!("node_key_2:");
@@ -167,6 +161,7 @@ fn main() {
     let kp_bitcoin2 = extract_keypair(&secp, args.bitcoin_key_2.unwrap().as_str(), network);
 
     let msg_to_sign = args.msg.unwrap();
+
 
     let (musig_pubs, musig_sig) = create_musig(
         vec![kp_node1, kp_node2, kp_bitcoin1, kp_bitcoin2],
@@ -191,38 +186,6 @@ fn main() {
 
     let tap_key = aggregate_keys(musig_pubs2);
     address(&secp, tap_key, network);
-
-    // Generate a new keypair or use the given private key.
-    let keypair = match args.priv_key.as_deref() {
-        Some(priv_str) => {
-            let keypair = if priv_str == "new" {
-                gen_keypair(&secp)
-            } else {
-                let sk = SecretKey::from_str(&priv_str).unwrap();
-                Keypair::from_secret_key(&secp, &sk)
-            };
-
-            let (internal_key, _parity) = keypair.x_only_public_key();
-            let script_buf = ScriptBuf::new_p2tr(&secp, internal_key, None);
-            let addr = Address::from_script(script_buf.as_script(), network).unwrap();
-            println!("priv: {}", hex::encode(keypair.secret_key().secret_bytes()));
-            println!("pub: {}", internal_key);
-            println!("address: {}", addr);
-
-            if priv_str == "new" {
-                return;
-            }
-
-            Some(keypair)
-        }
-        _ => {
-            if args.prove {
-                println!("priv key needed");
-                return;
-            }
-            None
-        }
-    };
 
     let receipt_file = if args.prove {
         let r = File::create(args.receipt_file.unwrap()).unwrap();
@@ -315,10 +278,6 @@ fn main() {
     assert_eq!(lh, leaf_hash);
 
     // We will prove inclusion in the UTXO set of the key we control.
-    //let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
-    let priv_bytes = keypair.unwrap().secret_key().secret_bytes();
-    let priv_key = schnorr::SigningKey::from_bytes(&priv_bytes).unwrap();
-
     let verifying_key = schnorr::VerifyingKey::try_from(tap_key).unwrap();
     let internal_key= XOnlyPublicKey::from_slice(verifying_key.to_bytes().as_slice()).unwrap();
 
@@ -331,45 +290,13 @@ fn main() {
     assert_eq!(acc.verify(&proof, &[leaf_hash]), Ok(true));
     println!("stump proof verified");
 
-    // Sign using the tweaked key.
-    let sig = secp.sign_schnorr(&msg, &keypair.unwrap());
-
-    // Verify signature.
-    let (pubkey, _) = keypair.unwrap().x_only_public_key();
-    println!("pubkey: {}", pubkey);
-
-    let sig_bytes = sig.serialize();
-    println!("secp signature: {}", hex::encode(sig_bytes));
-    secp.verify_schnorr(&sig, &msg, &pubkey)
-        .expect("secp verification failed");
-
-    let pub_bytes = pubkey.serialize();
-
-    println!("creating verifying key");
-    let verifying_key = schnorr::VerifyingKey::from_bytes(&pub_bytes).unwrap();
-    println!(
-        "created verifying key: {}",
-        hex::encode(verifying_key.to_bytes())
-    );
-
-    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
-    println!("schnorr signature: {}", hex::encode(schnorr_sig.to_bytes()));
-
-    verifying_key
-        .verify(msg_bytes, &schnorr_sig)
-        .expect("schnorr verification failed");
-
     let start_time = SystemTime::now();
     let env = ExecutorEnv::builder()
         .write(&msg_bytes)
         .unwrap()
-        .write(&priv_key)
-        .unwrap()
         .write(&acc)
         .unwrap()
         .write(&proof)
-        .unwrap()
-        .write(&sig_bytes.as_slice())
         .unwrap()
         .write(&tx)
         .unwrap()
@@ -430,7 +357,6 @@ fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64])
         let ver_key = pk.verifying_key();
         pubs.push(ver_key.into());
     }
-
 
     let key_agg_ctx = KeyAggContext::new(pubs.clone()).unwrap();
 
