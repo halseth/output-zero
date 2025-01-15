@@ -116,8 +116,12 @@ fn main() {
     hasher.update(&vk2.to_bytes());
     let pk_hash = hex::encode(hasher.finalize());
 
+    let mut shasher = Sha512_256::new();
+    s.serialize(&mut shasher).unwrap();
+    let stump_hash = hex::encode(shasher.finalize());
+
     // write public output to the journal
-    env::commit(&s);
+    env::commit(&stump_hash);
     env::commit(&pk_hash);
     env::commit(&msg);
 }

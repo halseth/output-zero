@@ -29,7 +29,7 @@ use musig2::{
     AggNonce, FirstRound, KeyAggContext, PartialSignature, PubNonce, SecNonce, SecNonceSpices,
     SecondRound,
 };
-
+use sha2::{Digest, Sha512_256};
 use shared::{aggregate_keys, get_leaf_hashes, verify_musig};
 
 fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
@@ -162,7 +162,6 @@ fn main() {
 
     let msg_to_sign = args.msg.unwrap();
 
-
     let (musig_pubs, musig_sig) = create_musig(
         vec![kp_node1, kp_node2, kp_bitcoin1, kp_bitcoin2],
         &msg_to_sign,
@@ -173,9 +172,9 @@ fn main() {
         true,
     );
 
-    let (musig_pubs2, musig_sig2) = create_musig(vec![kp_bitcoin1, kp_bitcoin2], &msg_to_sign);
-
     println!("musig successfully verified");
+
+    let (musig_pubs2, musig_sig2) = create_musig(vec![kp_bitcoin1, kp_bitcoin2], &msg_to_sign);
 
     assert_eq!(
         verify_musig(musig_pubs2.clone(), musig_sig2, &msg_to_sign),
@@ -279,7 +278,7 @@ fn main() {
 
     // We will prove inclusion in the UTXO set of the key we control.
     let verifying_key = schnorr::VerifyingKey::try_from(tap_key).unwrap();
-    let internal_key= XOnlyPublicKey::from_slice(verifying_key.to_bytes().as_slice()).unwrap();
+    let internal_key = XOnlyPublicKey::from_slice(verifying_key.to_bytes().as_slice()).unwrap();
 
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
 
@@ -337,15 +336,20 @@ fn main() {
 }
 
 fn verify_receipt(receipt: &Receipt, s: &Stump) {
-    let (receipt_stump, sk_hash, msg): (Stump, String, String) = receipt.journal.decode().unwrap();
+    let (stump_hash, pk_hash, msg): (String, String, String) = receipt.journal.decode().unwrap();
 
-    assert_eq!(&receipt_stump, s, "stumps not equal");
+    let mut hasher = Sha512_256::new();
+    s.serialize(&mut hasher).unwrap();
+    let h = hex::encode(hasher.finalize());
 
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
-    receipt.verify(METHOD_ID).unwrap();
-    println!("priv key hash: {}", sk_hash);
+    println!("bitcoin keys hash: {}", pk_hash);
     println!("signed msg: {}", msg);
+    println!("stump hash: {}", stump_hash);
+
+    assert_eq!(stump_hash, h, "stumps not equal");
+    receipt.verify(METHOD_ID).unwrap();
 }
 fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64]) {
     let mut pubs: Vec<PublicKey> = Vec::new();
