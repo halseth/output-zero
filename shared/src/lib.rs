@@ -4,6 +4,7 @@ use bitcoin_hashes::Hash as BitcoinHash;
 use sha2::{Digest, Sha512_256};
 
 use bitcoin::consensus::Encodable;
+use bitcoin::key::Keypair;
 use bitcoin::{BlockHash, Transaction};
 use k256::PublicKey;
 
@@ -57,11 +58,19 @@ pub fn aggregate_keys(pubs: Vec<PublicKey>) -> PublicKey {
     aggregated_pubkey
 }
 
-pub fn verify_musig(pubs: Vec<PublicKey>, sig: [u8; 64], message: &str) -> bool {
+pub fn verify_musig(pubs: Vec<PublicKey>, sig: [u8; 64], message: &Vec<u8>) -> bool {
     let aggregated_pubkey: PublicKey = aggregate_keys(pubs);
 
     musig2::verify_single(aggregated_pubkey, &sig, message)
         .expect("aggregated signature must be valid");
 
     true
+}
+
+pub fn sort_pubkeys(pubkeys: &mut Vec<PublicKey>) {
+    pubkeys.sort_by(|a, b| a.to_sec1_bytes().cmp(&b.to_sec1_bytes()));
+}
+
+pub fn sort_keypairs(kp: &mut Vec<Keypair>) {
+    kp.sort_by(|a, b| a.public_key().serialize().cmp(&b.public_key().serialize()));
 }

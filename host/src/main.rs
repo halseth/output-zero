@@ -15,7 +15,7 @@ use std::str::FromStr;
 use std::time::SystemTime;
 
 use bitcoin::consensus::deserialize;
-use bitcoin::key::Keypair;
+use bitcoin::key::{Keypair, UntweakedPublicKey};
 use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing, Verification};
 use bitcoin::{Address, BlockHash, Network, PrivateKey, ScriptBuf, Transaction, XOnlyPublicKey};
 use clap::builder::TypedValueParser;
@@ -30,7 +30,7 @@ use musig2::{
     SecondRound,
 };
 use sha2::{Digest, Sha512_256};
-use shared::{aggregate_keys, get_leaf_hashes, verify_musig};
+use shared::{aggregate_keys, get_leaf_hashes, sort_keypairs, sort_pubkeys, verify_musig};
 
 fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
     let sk = SecretKey::new(&mut rand::thread_rng());
@@ -72,9 +72,23 @@ struct Args {
     #[arg(long)]
     vout: Option<u32>,
 
-    /// Message to sign.
-    #[arg(short, long)]
-    msg: Option<String>,
+    #[arg(long)]
+    msg_hex: Option<String>,
+
+    #[arg(long)]
+    musig_sig: Option<String>,
+
+    #[arg(long)]
+    node_key_1_priv: Option<String>,
+
+    #[arg(long)]
+    node_key_2_priv: Option<String>,
+
+    #[arg(long)]
+    bitcoin_key_1_priv: Option<String>,
+
+    #[arg(long)]
+    bitcoin_key_2_priv: Option<String>,
 
     #[arg(long)]
     node_key_1: Option<String>,
@@ -105,6 +119,15 @@ struct CliStump {
     pub leaves: u64,
 }
 
+fn parse_pubkey(pub_str: &str) -> PublicKey {
+    let pk_bytes = hex::decode(pub_str).unwrap();
+    let pk = PublicKey::from_sec1_bytes(&pk_bytes).unwrap();
+
+    println!("sec1 pub: {}", hex::encode(pk_bytes));
+
+    pk
+}
+
 fn extract_keypair<C: Signing + Verification>(
     secp: &Secp256k1<C>,
     priv_str: &str,
@@ -128,11 +151,8 @@ fn extract_keypair<C: Signing + Verification>(
 }
 
 fn address<C: Verification>(secp: &Secp256k1<C>, pubkey: PublicKey, network: Network) {
-    let verifying_key = schnorr::VerifyingKey::try_from(pubkey).unwrap();
-    //    let ver_key = schnorr::VerifyingKey{
-    //        inner: pubkey,
-    //    };
-    let pubx = XOnlyPublicKey::from_slice(verifying_key.to_bytes().as_slice()).unwrap();
+    let pub_bytes: [u8; 32] = pubkey.to_sec1_bytes()[1..].try_into().unwrap();
+    let pubx = XOnlyPublicKey::from_slice(&pub_bytes).unwrap();
 
     let script_buf = ScriptBuf::new_p2tr(&secp, pubx, None);
     let addr = Address::from_script(script_buf.as_script(), network).unwrap();
@@ -151,40 +171,92 @@ fn main() {
     let secp = Secp256k1::new();
     let network = args.network;
 
+    let mut keypairs = vec![];
+
     println!("node_key_1:");
-    let kp_node1 = extract_keypair(&secp, args.node_key_1.unwrap().as_str(), network);
+    let pub_node1 = match args.node_key_1_priv {
+        Some(priv_str) => {
+            let kp = extract_keypair(&secp, &priv_str, network);
+            keypairs.push(kp);
+            PublicKey::from_sec1_bytes(&kp.public_key().serialize()).unwrap()
+        }
+        None => parse_pubkey(&args.node_key_1.unwrap()),
+    };
+
     println!("node_key_2:");
-    let kp_node2 = extract_keypair(&secp, args.node_key_2.unwrap().as_str(), network);
+    let pub_node2 = match args.node_key_2_priv {
+        Some(priv_str) => {
+            let kp = extract_keypair(&secp, &priv_str, network);
+            keypairs.push(kp);
+            PublicKey::from_sec1_bytes(&kp.public_key().serialize()).unwrap()
+        }
+        None => parse_pubkey(&args.node_key_2.unwrap()),
+    };
+
     println!("bitcoin_key_1:");
-    let kp_bitcoin1 = extract_keypair(&secp, args.bitcoin_key_1.unwrap().as_str(), network);
+    let pub_bitcoin1 = match args.bitcoin_key_1_priv {
+        Some(priv_str) => {
+            let kp = extract_keypair(&secp, &priv_str, network);
+            keypairs.push(kp);
+            PublicKey::from_sec1_bytes(&kp.public_key().serialize()).unwrap()
+        }
+        None => parse_pubkey(&args.bitcoin_key_1.unwrap()),
+    };
+
     println!("bitcoin_key_2:");
-    let kp_bitcoin2 = extract_keypair(&secp, args.bitcoin_key_2.unwrap().as_str(), network);
+    let pub_bitcoin2 = match args.bitcoin_key_2_priv {
+        Some(priv_str) => {
+            let kp = extract_keypair(&secp, &priv_str, network);
+            keypairs.push(kp);
+            PublicKey::from_sec1_bytes(&kp.public_key().serialize()).unwrap()
+        }
+        None => parse_pubkey(&args.bitcoin_key_2.unwrap()),
+    };
 
-    let msg_to_sign = args.msg.unwrap();
+    sort_keypairs(&mut keypairs);
 
-    let (musig_pubs, musig_sig) = create_musig(
-        vec![kp_node1, kp_node2, kp_bitcoin1, kp_bitcoin2],
-        &msg_to_sign,
-    );
+    let msg_to_sign = hex::decode(args.msg_hex.unwrap()).unwrap();
+
+    let all_pubs = vec![pub_node1, pub_node2, pub_bitcoin1, pub_bitcoin2];
+    let mut musig_pubs = all_pubs.clone();
+    sort_pubkeys(&mut musig_pubs);
+
+    let mut bitcoin_pubs = vec![pub_bitcoin1, pub_bitcoin2];
+    sort_pubkeys(&mut bitcoin_pubs);
+
+    for i in 0..musig_pubs.len() {
+        println!("key[{}]={}", i, hex::encode(musig_pubs[i].to_sec1_bytes()));
+    }
+
+    let tap_key = aggregate_keys(bitcoin_pubs);
+    let tap_bytes = tap_key.to_sec1_bytes();
+    println!("tap key : {}", hex::encode(&tap_bytes));
+    address(&secp, tap_key, network);
+
+    let musig_sig = match args.musig_sig {
+        Some(musig_sig) => hex::decode(musig_sig).unwrap(),
+
+        // In case no signature is provided, we assume we are signing the message and private keys
+        // are available,
+        None => {
+            println!("signing");
+            let (_, sig) = create_musig(keypairs, &msg_to_sign);
+            sig.to_vec()
+        }
+    };
+
+    println!("musig sig: {}", hex::encode(&musig_sig));
 
     assert_eq!(
-        verify_musig(musig_pubs.clone(), musig_sig, &msg_to_sign),
+        verify_musig(
+            musig_pubs.clone(),
+            musig_sig.clone().try_into().unwrap(),
+            &msg_to_sign
+        ),
         true,
     );
 
     println!("musig successfully verified");
-
-    let (musig_pubs2, musig_sig2) = create_musig(vec![kp_bitcoin1, kp_bitcoin2], &msg_to_sign);
-
-    assert_eq!(
-        verify_musig(musig_pubs2.clone(), musig_sig2, &msg_to_sign),
-        true,
-    );
-
-    println!("musig with 2 pubs successfully verified");
-
-    let tap_key = aggregate_keys(musig_pubs2);
-    address(&secp, tap_key, network);
 
     let receipt_file = if args.prove {
         let r = File::create(args.receipt_file.unwrap()).unwrap();
@@ -245,11 +317,6 @@ fn main() {
         }
     };
 
-    let msg_bytes = msg_to_sign.as_bytes();
-    let digest = sha256::Hash::hash(msg_bytes);
-    let digest_bytes = digest.to_byte_array();
-    let msg = Message::from_digest(digest_bytes);
-
     let proof: CliProof = serde_json::from_str(&args.utreexo_proof.unwrap()).unwrap();
     let proof = Proof {
         targets: proof.targets,
@@ -277,8 +344,8 @@ fn main() {
     assert_eq!(lh, leaf_hash);
 
     // We will prove inclusion in the UTXO set of the key we control.
-    let verifying_key = schnorr::VerifyingKey::try_from(tap_key).unwrap();
-    let internal_key = XOnlyPublicKey::from_slice(verifying_key.to_bytes().as_slice()).unwrap();
+    let internal_key = XOnlyPublicKey::from_slice(&tap_bytes[1..]).unwrap();
+    println!("xonly tap key: {}", hex::encode(internal_key.serialize()));
 
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
 
@@ -291,7 +358,7 @@ fn main() {
 
     let start_time = SystemTime::now();
     let env = ExecutorEnv::builder()
-        .write(&msg_bytes)
+        .write(&msg_to_sign)
         .unwrap()
         .write(&acc)
         .unwrap()
@@ -305,7 +372,7 @@ fn main() {
         .unwrap()
         .write(&block_hash)
         .unwrap()
-        .write(&musig_pubs)
+        .write(&all_pubs)
         .unwrap()
         .write(&musig_sig.as_slice())
         .unwrap()
@@ -336,7 +403,7 @@ fn main() {
 }
 
 fn verify_receipt(receipt: &Receipt, s: &Stump) {
-    let (stump_hash, pk_hash, msg): (String, String, String) = receipt.journal.decode().unwrap();
+    let (stump_hash, pk_hash, msg): (String, String, Vec<u8>) = receipt.journal.decode().unwrap();
 
     let mut hasher = Sha512_256::new();
     s.serialize(&mut hasher).unwrap();
@@ -345,32 +412,33 @@ fn verify_receipt(receipt: &Receipt, s: &Stump) {
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
     println!("bitcoin keys hash: {}", pk_hash);
-    println!("signed msg: {}", msg);
+    println!("signed msg: {}", hex::encode(msg));
     println!("stump hash: {}", stump_hash);
 
     assert_eq!(stump_hash, h, "stumps not equal");
     receipt.verify(METHOD_ID).unwrap();
 }
-fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64]) {
+fn create_musig(keys: Vec<Keypair>, message: &Vec<u8>) -> (Vec<PublicKey>, [u8; 64]) {
     let mut pubs: Vec<PublicKey> = Vec::new();
 
     for kp in keys.clone() {
         let bytes = kp.secret_key().secret_bytes();
-        let pk = schnorr::SigningKey::from_bytes(&bytes).unwrap();
-
-        let ver_key = pk.verifying_key();
-        pubs.push(ver_key.into());
+        let str = hex::encode(bytes);
+        let scalar: musig2::secp::Scalar = str.parse().unwrap();
+        let p = scalar.base_point_mul();
+        let pubkey = PublicKey::from(p);
+        pubs.push(pubkey.into());
     }
 
     let key_agg_ctx = KeyAggContext::new(pubs.clone()).unwrap();
 
     for kp in keys.clone() {
-        //    let sk = bitcoin::secp256k1::SecretKey::from_str(&k).unwrap();
         let bytes = kp.secret_key().secret_bytes();
         let str = hex::encode(bytes);
         println!("priv key: {}", str);
         let scalar: musig2::secp::Scalar = str.parse().unwrap();
         let p = scalar.base_point_mul();
+        println!("point: {}", hex::encode(p.serialize()));
         key_agg_ctx.key_coefficient(p).unwrap();
     }
 
@@ -441,11 +509,11 @@ fn create_musig(keys: Vec<Keypair>, message: &str) -> (Vec<PublicKey>, [u8; 64])
         &key_agg_ctx,
         &aggregated_nonce,
         partial_signatures,
-        message,
+        &message,
     )
     .expect("error aggregating signatures");
 
-    musig2::verify_single(aggregated_pubkey, &final_signature, message)
+    musig2::verify_single(aggregated_pubkey, &final_signature, &message)
         .expect("aggregated signature must be valid");
 
     (pubs, final_signature)
