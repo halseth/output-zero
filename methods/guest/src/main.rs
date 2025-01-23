@@ -90,8 +90,8 @@ fn main() {
     );
 
     // Aggregate the bitcoin keys.
-    let bitcoin_key1 = musig_pubs[2];
-    let bitcoin_key2 = musig_pubs[3];
+    let bitcoin_key1 = all_pubs[2];
+    let bitcoin_key2 = all_pubs[3];
     let mut bitcoin_keys =vec![bitcoin_key1, bitcoin_key2];
     sort_pubkeys(&mut bitcoin_keys);
     let tap_pub = aggregate_keys(bitcoin_keys);
