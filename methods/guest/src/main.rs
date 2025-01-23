@@ -89,6 +89,9 @@ fn main() {
         true,
     );
 
+    let node_key1 = all_pubs[0];
+    let node_key2 = all_pubs[1];
+
     // Aggregate the bitcoin keys.
     let bitcoin_key1 = all_pubs[2];
     let bitcoin_key2 = all_pubs[3];
@@ -121,6 +124,8 @@ fn main() {
     let stump_hash = hex::encode(shasher.finalize());
 
     // write public output to the journal
+    env::commit(&node_key1);
+    env::commit(&node_key2);
     env::commit(&stump_hash);
     env::commit(&pk_hash);
     env::commit(&msg_bytes);

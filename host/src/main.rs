@@ -403,7 +403,7 @@ fn main() {
 }
 
 fn verify_receipt(receipt: &Receipt, s: &Stump) {
-    let (stump_hash, pk_hash, msg): (String, String, Vec<u8>) = receipt.journal.decode().unwrap();
+    let (node_key1, node_key2, stump_hash, pk_hash, msg): (PublicKey, PublicKey, String, String, Vec<u8>) = receipt.journal.decode().unwrap();
 
     let mut hasher = Sha512_256::new();
     s.serialize(&mut hasher).unwrap();
@@ -411,6 +411,8 @@ fn verify_receipt(receipt: &Receipt, s: &Stump) {
 
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
+    println!("committed node_key1 : {}", hex::encode(&node_key1.to_sec1_bytes()));
+    println!("committed node_key2 : {}", hex::encode(&node_key2.to_sec1_bytes()));
     println!("bitcoin keys hash: {}", pk_hash);
     println!("signed msg: {}", hex::encode(msg));
     println!("stump hash: {}", stump_hash);
