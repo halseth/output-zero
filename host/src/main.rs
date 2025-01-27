@@ -424,6 +424,19 @@ fn verify_receipt(receipt: &Receipt, s: &Stump) {
 
     assert_eq!(stump_hash, h, "stumps not equal");
     receipt.verify(METHOD_ID).unwrap();
+    println!("verified METHOD_ID={}", hex::encode(to_bytes(METHOD_ID)));
+}
+
+fn to_bytes(h: [u32;8]) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    for i in 0..8 {
+        let b: [u8; 4] = h[i].to_be_bytes();
+        for j in 0..4 {
+            buf[i*4+j] = b[j];
+        }
+    }
+
+    buf
 }
 fn create_musig(keys: Vec<Keypair>, message: &Vec<u8>) -> (Vec<PublicKey>, [u8; 64]) {
     let mut pubs: Vec<PublicKey> = Vec::new();
