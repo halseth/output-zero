@@ -397,7 +397,7 @@ fn main() {
     // extract the receipt.
     let receipt = prove_info.receipt;
 
-    verify_receipt(&receipt, &acc);
+    verify_receipt(&receipt);
 
     let seal_size = receipt.seal_size();
 
@@ -407,12 +407,8 @@ fn main() {
     bincode::serialize_into(receipt_file, &receipt).unwrap();
 }
 
-fn verify_receipt(receipt: &Receipt, s: &Stump) {
+fn verify_receipt(receipt: &Receipt) {
     let (node_key1, node_key2, stump_hash, pk_hash, msg): (PublicKey, PublicKey, String, String, Vec<u8>) = receipt.journal.decode().unwrap();
-
-    let mut hasher = Sha512_256::new();
-    s.serialize(&mut hasher).unwrap();
-    let h = hex::encode(hasher.finalize());
 
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
@@ -422,7 +418,6 @@ fn verify_receipt(receipt: &Receipt, s: &Stump) {
     println!("signed msg: {}", hex::encode(msg));
     println!("stump hash: {}", stump_hash);
 
-    assert_eq!(stump_hash, h, "stumps not equal");
     receipt.verify(METHOD_ID).unwrap();
     println!("verified METHOD_ID={}", hex::encode(to_bytes(METHOD_ID)));
 }
