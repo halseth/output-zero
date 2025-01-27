@@ -143,8 +143,10 @@ fn extract_keypair<C: Signing + Verification>(
     let (internal_key, _parity) = keypair.x_only_public_key();
     let script_buf = ScriptBuf::new_p2tr(&secp, internal_key, None);
     let addr = Address::from_script(script_buf.as_script(), network).unwrap();
+    let pubkey = keypair.public_key();
     println!("priv: {}", hex::encode(keypair.secret_key().secret_bytes()));
-    println!("pub: {}", internal_key);
+    println!("pubkey: {}", hex::encode(pubkey.serialize()));
+    println!("xonly pub: {}", internal_key);
     println!("address: {}", addr);
 
     keypair
