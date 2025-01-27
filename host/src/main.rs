@@ -170,6 +170,23 @@ fn main() {
 
     let args = Args::parse();
 
+    let receipt_file = if args.prove {
+        let r = File::create(args.receipt_file.unwrap()).unwrap();
+        r
+    } else {
+        let r = File::open(args.receipt_file.unwrap()).unwrap();
+        r
+    };
+
+    // If not proving, simply verify the passed receipt using the loaded utxo set.
+    let start_time = SystemTime::now();
+    if !args.prove {
+        let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
+        verify_receipt(&receipt);
+        println!("receipt verified in {:?}", start_time.elapsed().unwrap());
+        return;
+    }
+
     let secp = Secp256k1::new();
     let network = args.network;
 
@@ -260,13 +277,6 @@ fn main() {
 
     println!("musig successfully verified");
 
-    let receipt_file = if args.prove {
-        let r = File::create(args.receipt_file.unwrap()).unwrap();
-        r
-    } else {
-        let r = File::open(args.receipt_file.unwrap()).unwrap();
-        r
-    };
 
     let acc: CliStump = serde_json::from_str(&args.utreexo_acc.unwrap()).unwrap();
     let acc = Stump {
@@ -278,15 +288,8 @@ fn main() {
             .collect(),
     };
 
-    let start_time = SystemTime::now();
 
-    // If not proving, simply verify the passed receipt using the loaded utxo set.
-    if !args.prove {
-        let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
-        verify_receipt(&receipt, &acc);
-        println!("receipt verified in {:?}", start_time.elapsed().unwrap());
-        return;
-    }
+
 
     let proof_type: ProverOpts = match args.proof_type.as_deref() {
         None => {
