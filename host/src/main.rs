@@ -264,6 +264,10 @@ fn main() {
         }
     };
 
+    let agg_key = aggregate_keys(musig_pubs.clone());
+    let agg_bytes = agg_key.to_sec1_bytes();
+    println!("aggregate key : {}", hex::encode(&agg_bytes));
+
     println!("musig sig: {}", hex::encode(&musig_sig));
 
     assert_eq!(
