@@ -4,7 +4,6 @@ use std::fs::File;
 use methods::{METHOD_ELF, METHOD_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, Receipt};
 
-use bitcoin_hashes::sha256;
 use bitcoin_hashes::Hash as BitcoinHash;
 
 use clap::Parser;
@@ -15,21 +14,17 @@ use std::str::FromStr;
 use std::time::SystemTime;
 
 use bitcoin::consensus::deserialize;
-use bitcoin::key::{Keypair, UntweakedPublicKey};
-use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing, Verification};
-use bitcoin::{Address, BlockHash, Network, PrivateKey, ScriptBuf, Transaction, XOnlyPublicKey};
+use bitcoin::key::Keypair;
+use bitcoin::secp256k1::{rand, Secp256k1, SecretKey, Signing, Verification};
+use bitcoin::{Address, BlockHash, Network, ScriptBuf, Transaction, XOnlyPublicKey};
 use clap::builder::TypedValueParser;
-use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::proof::Proof;
 use serde::{Deserialize, Serialize};
 
 use k256::PublicKey;
-use musig2::{
-    AggNonce, FirstRound, KeyAggContext, PartialSignature, PubNonce, SecNonce, SecNonceSpices,
-    SecondRound,
-};
-use sha2::{Digest, Sha512_256};
+use musig2::{AggNonce, KeyAggContext, PartialSignature, SecNonce};
+use sha2::Digest;
 use shared::{aggregate_keys, get_leaf_hashes, sort_keypairs, sort_pubkeys, verify_musig};
 
 fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
@@ -281,7 +276,6 @@ fn main() {
 
     println!("musig successfully verified");
 
-
     let acc: CliStump = serde_json::from_str(&args.utreexo_acc.unwrap()).unwrap();
     let acc = Stump {
         leaves: acc.leaves,
@@ -291,9 +285,6 @@ fn main() {
             .map(|root| NodeHash::from_str(&root).expect("invalid hash"))
             .collect(),
     };
-
-
-
 
     let proof_type: ProverOpts = match args.proof_type.as_deref() {
         None => {
@@ -412,12 +403,24 @@ fn main() {
 }
 
 fn verify_receipt(receipt: &Receipt) {
-    let (node_key1, node_key2, stump_hash, pk_hash, msg): (PublicKey, PublicKey, String, String, Vec<u8>) = receipt.journal.decode().unwrap();
+    let (node_key1, node_key2, stump_hash, pk_hash, msg): (
+        PublicKey,
+        PublicKey,
+        String,
+        String,
+        Vec<u8>,
+    ) = receipt.journal.decode().unwrap();
 
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
-    println!("committed node_key1 : {}", hex::encode(&node_key1.to_sec1_bytes()));
-    println!("committed node_key2 : {}", hex::encode(&node_key2.to_sec1_bytes()));
+    println!(
+        "committed node_key1 : {}",
+        hex::encode(&node_key1.to_sec1_bytes())
+    );
+    println!(
+        "committed node_key2 : {}",
+        hex::encode(&node_key2.to_sec1_bytes())
+    );
     println!("bitcoin keys hash: {}", pk_hash);
     println!("signed msg: {}", hex::encode(msg));
     println!("stump hash: {}", stump_hash);
@@ -426,12 +429,12 @@ fn verify_receipt(receipt: &Receipt) {
     println!("verified METHOD_ID={}", hex::encode(to_bytes(METHOD_ID)));
 }
 
-fn to_bytes(h: [u32;8]) -> [u8; 32] {
+fn to_bytes(h: [u32; 8]) -> [u8; 32] {
     let mut buf = [0u8; 32];
     for i in 0..8 {
         let b: [u8; 4] = h[i].to_be_bytes();
         for j in 0..4 {
-            buf[i*4+j] = b[j];
+            buf[i * 4 + j] = b[j];
         }
     }
 
