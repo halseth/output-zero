@@ -1,4 +1,4 @@
-use bitcoin_hashes::sha256;
+use bitcoin_hashes::{sha256, HashEngine};
 use bitcoin_hashes::Hash as BitcoinHash;
 
 use sha2::{Digest, Sha512_256};
@@ -7,7 +7,7 @@ use bitcoin::consensus::Encodable;
 use bitcoin::key::{Keypair, UntweakedPublicKey};
 use bitcoin::script::{Builder, PushBytes};
 use bitcoin::{
-    BlockHash, ScriptBuf, TapNodeHash, TapTweakHash, Transaction, WitnessVersion, XOnlyPublicKey,
+    BlockHash, ScriptBuf, TapNodeHash, TapTweakHash, Transaction, WitnessVersion,
 };
 use k256::schnorr;
 use k256::PublicKey;
@@ -76,10 +76,10 @@ pub fn sort_pubkeys(pubkeys: &mut Vec<PublicKey>) {
 pub fn sort_keypairs(kp: &mut Vec<Keypair>) {
     kp.sort_by(|a, b| a.public_key().serialize().cmp(&b.public_key().serialize()));
 }
-pub fn new_p2tr(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>) -> ScriptBuf {
-    let output_key = tap_tweak(internal_key, merkle_root);
+pub fn new_p2tr(internal_key_bytes: [u8; 32], merkle_root: Option<TapNodeHash>) -> ScriptBuf {
+    let output_key = tap_tweak(internal_key_bytes, merkle_root);
     // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
-    new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
+    new_witness_program_unchecked(WitnessVersion::V1, output_key)
 }
 
 fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
@@ -96,10 +96,12 @@ fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
         .into_script()
 }
 
-fn tap_tweak(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>) -> XOnlyPublicKey {
-    let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root).to_scalar();
+fn tap_tweak(internal_key_bytes: [u8; 32], merkle_root: Option<TapNodeHash>) -> [u8; 32] {
+    let mut eng = TapTweakHash::engine();
+    eng.input(&internal_key_bytes);
+    let tweak= TapTweakHash::from_engine(eng).to_scalar();
 
-    let pub_bytes = internal_key.serialize();
+    let pub_bytes = internal_key_bytes;
     let pub_key: k256::PublicKey = schnorr::VerifyingKey::from_bytes(&pub_bytes)
         .unwrap()
         .into();
@@ -117,7 +119,7 @@ fn tap_tweak(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>)
 
     let ver_key = schnorr::VerifyingKey::from_bytes(&x_coordinate).unwrap();
 
-    let pubx = XOnlyPublicKey::from_slice(ver_key.to_bytes().as_slice()).unwrap();
+    let pubx: [u8; 32] = ver_key.to_bytes().try_into().unwrap();
 
     pubx
 }
