@@ -99,7 +99,7 @@ fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
 fn tap_tweak(internal_key_bytes: [u8; 32], merkle_root: Option<TapNodeHash>) -> [u8; 32] {
     let mut eng = TapTweakHash::engine();
     eng.input(&internal_key_bytes);
-    let tweak= TapTweakHash::from_engine(eng).to_scalar();
+    let tweak_hash = TapTweakHash::from_engine(eng);
 
     let pub_bytes = internal_key_bytes;
     let pub_key: k256::PublicKey = schnorr::VerifyingKey::from_bytes(&pub_bytes)
@@ -107,7 +107,7 @@ fn tap_tweak(internal_key_bytes: [u8; 32], merkle_root: Option<TapNodeHash>) -> 
         .into();
     let pub_point = pub_key.to_projective();
 
-    let tweak_bytes = &tweak.to_be_bytes();
+    let tweak_bytes = &tweak_hash.to_byte_array();
     let tweak_point = k256::SecretKey::from_bytes(tweak_bytes.into())
         .unwrap()
         .public_key()
