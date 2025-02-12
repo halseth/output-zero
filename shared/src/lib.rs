@@ -76,8 +76,8 @@ pub fn sort_pubkeys(pubkeys: &mut Vec<PublicKey>) {
 pub fn sort_keypairs(kp: &mut Vec<Keypair>) {
     kp.sort_by(|a, b| a.public_key().serialize().cmp(&b.public_key().serialize()));
 }
-pub fn new_p2tr(internal_key_bytes: [u8; 32], merkle_root: Option<TapNodeHash>) -> ScriptBuf {
-    let output_key = tap_tweak(internal_key_bytes, merkle_root);
+pub fn new_p2tr(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> ScriptBuf {
+    let output_key = tap_tweak(internal_key, merkle_root);
     // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
     new_witness_program_unchecked(WitnessVersion::V1, output_key)
 }
@@ -96,16 +96,13 @@ fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
         .into_script()
 }
 
-fn tap_tweak(internal_key_bytes: [u8; 32], merkle_root: Option<TapNodeHash>) -> [u8; 32] {
+fn tap_tweak(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> [u8; 32] {
+    let x_only_bytes : [u8; 32]= internal_key.to_sec1_bytes()[1..].try_into().unwrap();
     let mut eng = TapTweakHash::engine();
-    eng.input(&internal_key_bytes);
+    eng.input(&x_only_bytes);
     let tweak_hash = TapTweakHash::from_engine(eng);
 
-    let pub_bytes = internal_key_bytes;
-    let pub_key: k256::PublicKey = schnorr::VerifyingKey::from_bytes(&pub_bytes)
-        .unwrap()
-        .into();
-    let pub_point = pub_key.to_projective();
+    let pub_point = internal_key.to_projective();
 
     let tweak_bytes = &tweak_hash.to_byte_array();
     let tweak_point = k256::SecretKey::from_bytes(tweak_bytes.into())

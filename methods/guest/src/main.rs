@@ -49,14 +49,11 @@ fn main() {
     sort_pubkeys(&mut bitcoin_keys);
     let tap_pub = aggregate_keys(bitcoin_keys);
 
-    let pub_bytes : [u8; 32]= tap_pub.to_sec1_bytes()[1..].try_into().unwrap();
-    let pubx = XOnlyPublicKey::from_slice(&pub_bytes).unwrap();
-
     let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
     let leaf_hash = NodeHash::from(lh);
 
     // We'll check that the given public key corresponds to an output in the utxo set.
-    let script_pubkey = new_p2tr(pubx, None);
+    let script_pubkey = new_p2tr(tap_pub, None);
 
     // assert internal key is in tx used to calc leaf hash
     assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
