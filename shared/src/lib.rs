@@ -4,12 +4,11 @@ use bitcoin_hashes::Hash as BitcoinHash;
 use sha2::{Digest, Sha512_256};
 
 use bitcoin::consensus::Encodable;
-use bitcoin::key::{Keypair, UntweakedPublicKey};
+use bitcoin::key::{Keypair};
 use bitcoin::script::{Builder, PushBytes};
 use bitcoin::{
     BlockHash, ScriptBuf, TapNodeHash, TapTweakHash, Transaction, WitnessVersion,
 };
-use k256::schnorr;
 use k256::PublicKey;
 
 use musig2::k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -114,9 +113,7 @@ fn tap_tweak(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> [u8; 
     let compressed = tweaked_point.to_encoded_point(true);
     let x_coordinate = compressed.x().unwrap();
 
-    let ver_key = schnorr::VerifyingKey::from_bytes(&x_coordinate).unwrap();
-
-    let pubx: [u8; 32] = ver_key.to_bytes().try_into().unwrap();
+    let pubx: [u8; 32] = x_coordinate.as_slice().try_into().unwrap();
 
     pubx
 }
