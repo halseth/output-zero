@@ -14,7 +14,10 @@ privacy conscious users.
 TODO
 
 ### Taproot gossip (gossip v1.75)
-TODO: desribe current proposal
+See Elle's deep dive here: [Updates to the Gossip 1.75 proposal post LN summit meeting](https://delvingbitcoin.org/t/updates-to-the-gossip-1-75-proposal-post-ln-summit-meeting/1202).
+
+Tl;dr: a new `channel_announcement_2` message that carries a Musig2 signature
+proving the two nodes control a certain UTXO.
 
 Example `channel_announcement_2`:
 ```json
@@ -109,7 +112,7 @@ It is also assumed that proving time will come down as advances are made in
 proof systems and hardware acceleration.
 
 ### Handling received channel_announcement_zk
-When a node receives a `channel_accnouncement_zk` message, it will first use
+When a node receives a `channel_announcement_zk` message, it will first use
 the `pk_hash` to check whether this is a channel already known to the node. The
 `pk_hash` is deterministic and unique per channel. It will then verify the
 proof if it has a type known to the node. Otherwise it will ignore it.
