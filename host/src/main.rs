@@ -16,7 +16,7 @@ use std::time::SystemTime;
 use bitcoin::consensus::deserialize;
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{rand, Secp256k1, SecretKey, Signing, Verification};
-use bitcoin::{Address, BlockHash, Network, ScriptBuf, Transaction, XOnlyPublicKey};
+use bitcoin::{Address, BlockHash, Network, ScriptBuf, TapTweakHash, Transaction, XOnlyPublicKey};
 use clap::builder::TypedValueParser;
 use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::proof::Proof;
@@ -84,6 +84,9 @@ struct Args {
 
     #[arg(long)]
     bitcoin_key_2_priv: Option<String>,
+
+    #[arg(long)]
+    blind_secret: Option<String>,
 
     #[arg(long)]
     node_key_1: Option<String>,
@@ -227,6 +230,11 @@ fn main() {
         None => parse_pubkey(&args.bitcoin_key_2.unwrap()),
     };
 
+    let blind_str = args.blind_secret.unwrap();
+    println!("blind secret: {}", blind_str);
+    let blind_bytes: [u8; 32] = hex::decode(blind_str).unwrap().try_into().unwrap();
+    let blind = k256::SecretKey::from_bytes(&blind_bytes.into()).unwrap();
+
     sort_keypairs(&mut keypairs);
 
     let msg_to_sign = hex::decode(args.msg_hex.unwrap()).unwrap();
@@ -247,11 +255,14 @@ fn main() {
     println!("tap key : {}", hex::encode(&tap_bytes));
     address(&secp, tap_key, network);
 
-    let tap_blind_point = pub_bitcoin1.to_projective() + pub_bitcoin2.to_projective();
+    let blind_pub = blind.public_key();
+    let tap_blind_point = pub_bitcoin1.to_projective() + blind_pub.to_projective();
     let tap_blind_key: PublicKey = tap_blind_point.try_into().unwrap();
-    println!("tap blind key : {}", hex::encode(&tap_blind_key.to_sec1_bytes()));
+    println!(
+        "tap blind key : {}",
+        hex::encode(&tap_blind_key.to_sec1_bytes())
+    );
     address(&secp, tap_blind_key, network);
-    let  tap_bytes = tap_blind_key.to_sec1_bytes();
 
     let musig_sig = match args.musig_sig {
         Some(musig_sig) => hex::decode(musig_sig).unwrap(),
@@ -350,10 +361,18 @@ fn main() {
     assert_eq!(lh, leaf_hash);
 
     // We will prove inclusion in the UTXO set of the key we control.
+    let tap_bytes = tap_blind_key.to_sec1_bytes();
     let internal_key = XOnlyPublicKey::from_slice(&tap_bytes[1..]).unwrap();
     println!("xonly tap key: {}", hex::encode(internal_key.serialize()));
 
-    let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
+    let tweak_hash = TapTweakHash::from_key_and_tweak(internal_key, None);
+    println!("secp tweak hash: {}", tweak_hash);
+
+    let script_pubkey = shared::secp_new_p2tr(&secp, internal_key, None);
+    let script_pub2 = shared::new_p2tr(tap_blind_key, None);
+
+    println!("script_pubKey: {}", script_pubkey);
+    println!("script_pubKey2: {}", script_pub2);
 
     assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
 
@@ -382,12 +401,12 @@ fn main() {
         .write(&pub_bitcoin1)
         .unwrap()
         // Blinding key
-        .write(&pub_bitcoin2)
+        .write(&blind_bytes)
         .unwrap()
-//        .write(&all_pubs)
-//        .unwrap()
-//        .write(&musig_sig.as_slice())
-//        .unwrap()
+        //        .write(&all_pubs)
+        //        .unwrap()
+        //        .write(&musig_sig.as_slice())
+        //        .unwrap()
         .build()
         .unwrap();
 
