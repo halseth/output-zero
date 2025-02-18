@@ -101,7 +101,6 @@ fn tap_tweak(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> [u8; 
     eng.input(&x_only_bytes);
     let tweak_hash = TapTweakHash::from_engine(eng);
 
-    let pub_point = internal_key.to_projective();
 
     let tweak_bytes = &tweak_hash.to_byte_array();
     let tweak_point = k256::SecretKey::from_bytes(tweak_bytes.into())
@@ -109,7 +108,13 @@ fn tap_tweak(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> [u8; 
         .public_key()
         .to_projective();
 
-    let tweaked_point = pub_point + tweak_point;
+    let pub_point = internal_key.to_projective();
+    let pub_affine = internal_key.as_affine();
+    let tweaked_point = if pub_affine.y_is_odd().unwrap_u8() == 1 {
+        tweak_point - pub_point
+    } else {
+        pub_point + tweak_point
+    };
     let compressed = tweaked_point.to_encoded_point(true);
     let x_coordinate = compressed.x().unwrap();
 
