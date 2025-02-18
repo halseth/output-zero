@@ -20,7 +20,7 @@ fn main() {
 
 
     // read the input
-    let msg_bytes: Vec<u8> = env::read();
+//    let msg_bytes: Vec<u8> = env::read();
     let s: Stump = env::read();
     let proof: Proof = env::read();
 
@@ -28,26 +28,31 @@ fn main() {
     let vout: u32 = env::read();
     let block_height: u32 = env::read();
     let block_hash: BlockHash = env::read();
-    let all_pubs: Vec<PublicKey> = env::read();
-    let musig_sig_bytes: Vec<u8> = env::read();
 
-    let mut musig_pubs = all_pubs.clone();
-    sort_pubkeys(&mut musig_pubs);
+    // P + blinding key
+    let p_out: PublicKey = env::read();
+    let blind: PublicKey = env::read();
+    let tap_point = p_out.to_projective() + blind.to_projective();
+    let tap_pub: PublicKey = tap_point.try_into().unwrap();
+   // let musig_sig_bytes: Vec<u8> = env::read();
 
-    assert_eq!(
-        verify_musig(musig_pubs.clone(), musig_sig_bytes.clone().try_into().unwrap(), &msg_bytes),
-        true,
-    );
-
-    let node_key1 = all_pubs[0];
-    let node_key2 = all_pubs[1];
-
-    // Aggregate the bitcoin keys.
-    let bitcoin_key1 = all_pubs[2];
-    let bitcoin_key2 = all_pubs[3];
-    let mut bitcoin_keys =vec![bitcoin_key1, bitcoin_key2];
-    sort_pubkeys(&mut bitcoin_keys);
-    let tap_pub = aggregate_keys(bitcoin_keys);
+//    let mut musig_pubs = all_pubs.clone();
+//    sort_pubkeys(&mut musig_pubs);
+//
+//    assert_eq!(
+//        verify_musig(musig_pubs.clone(), musig_sig_bytes.clone().try_into().unwrap(), &msg_bytes),
+//        true,
+//    );
+//
+//    let node_key1 = all_pubs[0];
+//    let node_key2 = all_pubs[1];
+//
+//    // Aggregate the bitcoin keys.
+//    let bitcoin_key1 = all_pubs[2];
+//    let bitcoin_key2 = all_pubs[3];
+//    let mut bitcoin_keys =vec![bitcoin_key1, bitcoin_key2];
+//    sort_pubkeys(&mut bitcoin_keys);
+//    let tap_pub = aggregate_keys(bitcoin_keys);
 
     let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
     let leaf_hash = NodeHash::from(lh);
@@ -61,19 +66,19 @@ fn main() {
     // Assert it is in the set.
     assert_eq!(s.verify(&proof, &[leaf_hash]), Ok(true));
 
-    let mut hasher = Sha512_256::new();
-    hasher.update(&bitcoin_key1.to_sec1_bytes());
-    hasher.update(&bitcoin_key2.to_sec1_bytes());
-    let pk_hash = hex::encode(hasher.finalize());
+    //let mut hasher = Sha512_256::new();
+    //hasher.update(&bitcoin_key1.to_sec1_bytes());
+    //hasher.update(&bitcoin_key2.to_sec1_bytes());
+    //let pk_hash = hex::encode(hasher.finalize());
 
     let mut shasher = Sha512_256::new();
     s.serialize(&mut shasher).unwrap();
     let stump_hash = hex::encode(shasher.finalize());
 
     // write public output to the journal
-    env::commit(&node_key1);
-    env::commit(&node_key2);
+    env::commit(&p_out);
+    //env::commit(&node_key2);
     env::commit(&stump_hash);
-    env::commit(&pk_hash);
-    env::commit(&msg_bytes);
+    //env::commit(&pk_hash);
+    //env::commit(&msg_bytes);
 }

@@ -247,6 +247,12 @@ fn main() {
     println!("tap key : {}", hex::encode(&tap_bytes));
     address(&secp, tap_key, network);
 
+    let tap_blind_point = pub_bitcoin1.to_projective() + pub_bitcoin2.to_projective();
+    let tap_blind_key: PublicKey = tap_blind_point.try_into().unwrap();
+    println!("tap blind key : {}", hex::encode(&tap_blind_key.to_sec1_bytes()));
+    address(&secp, tap_blind_key, network);
+    let  tap_bytes = tap_blind_key.to_sec1_bytes();
+
     let musig_sig = match args.musig_sig {
         Some(musig_sig) => hex::decode(musig_sig).unwrap(),
 
@@ -358,8 +364,8 @@ fn main() {
 
     let start_time = SystemTime::now();
     let env = ExecutorEnv::builder()
-        .write(&msg_to_sign)
-        .unwrap()
+        //.write(&msg_to_sign)
+        //.unwrap()
         .write(&acc)
         .unwrap()
         .write(&proof)
@@ -372,10 +378,16 @@ fn main() {
         .unwrap()
         .write(&block_hash)
         .unwrap()
-        .write(&all_pubs)
+        // Pubkey
+        .write(&pub_bitcoin1)
         .unwrap()
-        .write(&musig_sig.as_slice())
+        // Blinding key
+        .write(&pub_bitcoin2)
         .unwrap()
+//        .write(&all_pubs)
+//        .unwrap()
+//        .write(&musig_sig.as_slice())
+//        .unwrap()
         .build()
         .unwrap();
 
@@ -403,27 +415,27 @@ fn main() {
 }
 
 fn verify_receipt(receipt: &Receipt) {
-    let (node_key1, node_key2, stump_hash, pk_hash, msg): (
-        PublicKey,
-        PublicKey,
-        String,
-        String,
-        Vec<u8>,
-    ) = receipt.journal.decode().unwrap();
+    //let (node_key1, node_key2, stump_hash, pk_hash, msg): (
+    //    PublicKey,
+    //    PublicKey,
+    //    String,
+    //    String,
+    //    Vec<u8>,
+    //) = receipt.journal.decode().unwrap();
 
-    // The receipt was verified at the end of proving, but the below code is an
-    // example of how someone else could verify this receipt.
-    println!(
-        "committed node_key1 : {}",
-        hex::encode(&node_key1.to_sec1_bytes())
-    );
-    println!(
-        "committed node_key2 : {}",
-        hex::encode(&node_key2.to_sec1_bytes())
-    );
-    println!("bitcoin keys hash: {}", pk_hash);
-    println!("signed msg: {}", hex::encode(msg));
-    println!("stump hash: {}", stump_hash);
+    //// The receipt was verified at the end of proving, but the below code is an
+    //// example of how someone else could verify this receipt.
+    //println!(
+    //    "committed node_key1 : {}",
+    //    hex::encode(&node_key1.to_sec1_bytes())
+    //);
+    //println!(
+    //    "committed node_key2 : {}",
+    //    hex::encode(&node_key2.to_sec1_bytes())
+    //);
+    //println!("bitcoin keys hash: {}", pk_hash);
+    //println!("signed msg: {}", hex::encode(msg));
+    //println!("stump hash: {}", stump_hash);
 
     receipt.verify(METHOD_ID).unwrap();
     println!("verified METHOD_ID={}", hex::encode(to_bytes(METHOD_ID)));
