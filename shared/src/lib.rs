@@ -1,7 +1,7 @@
-use bitcoin_hashes::{sha256, HashEngine};
+use bitcoin_hashes::HashEngine;
 use bitcoin_hashes::Hash as BitcoinHash;
 
-use sha2::{Digest, Sha512_256};
+use sha2::{Digest, Sha256, Sha512_256};
 
 use bitcoin::consensus::Encodable;
 use bitcoin::key::{Keypair};
@@ -26,7 +26,7 @@ pub fn get_leaf_hashes(
     vout: u32,
     height: u32,
     block_hash: BlockHash,
-) -> sha256::Hash {
+) -> [u8; 32] {
     let header_code = height << 1;
 
     let mut ser_utxo = Vec::new();
@@ -37,7 +37,7 @@ pub fn get_leaf_hashes(
     } else {
         header_code
     };
-    let txid = transaction.compute_txid();
+    let txid = compute_txid(&transaction);
     println!("txid: {txid}, block_hash: {block_hash} vout: {vout} height: {height}");
 
     let leaf_hash = Sha512_256::new()
@@ -49,7 +49,21 @@ pub fn get_leaf_hashes(
         .chain_update(header_code.to_le_bytes())
         .chain_update(ser_utxo)
         .finalize();
-    sha256::Hash::from_slice(leaf_hash.as_slice()).expect("parent_hash: Engines shouldn't be Err")
+    leaf_hash.try_into().unwrap()
+}
+
+pub fn compute_txid(tx: &Transaction) -> Txid {
+    let mut enc = Vec::new();
+    tx.version.consensus_encode(&mut enc).expect("engines don't error");
+    tx.input.consensus_encode(&mut enc).expect("engines don't error");
+    tx.output.consensus_encode(&mut enc).expect("engines don't error");
+    tx.lock_time.consensus_encode(&mut enc).expect("engines don't error");
+
+    // Compute double SHA-256 hash
+    let hash_result = Sha256::digest(Sha256::digest(&enc));
+
+    // Convert the hash result to a Txid
+    Txid::from_slice(&hash_result).expect("hash should be valid Txid")
 }
 
 pub fn aggregate_keys(pubs: Vec<PublicKey>) -> PublicKey {
