@@ -113,6 +113,35 @@ fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
         .into_script()
 }
 
+pub fn secp_new_p2tr<C: Verification>(
+    secp: &Secp256k1<C>,
+    internal_key: UntweakedPublicKey,
+    merkle_root: Option<TapNodeHash>,
+) -> ScriptBuf {
+    let (output_key, _) = secp_tap_tweak(internal_key, secp, merkle_root);
+    // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
+    new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
+}
+fn secp_tap_tweak<C: Verification>(
+    internal_key: UntweakedPublicKey,
+    secp: &Secp256k1<C>,
+    merkle_root: Option<TapNodeHash>,
+) -> (XOnlyPublicKey, Parity) {
+    let tweak_hash = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
+    println!(
+        "secp internal key: {}",
+        hex::encode(internal_key.serialize())
+    );
+    println!("secp tweak hash: {}", tweak_hash);
+    let tweak = tweak_hash.to_scalar();
+
+    let (output_key, parity) = internal_key
+        .add_tweak(secp, &tweak)
+        .expect("Tap tweak failed");
+
+    (output_key, parity)
+}
+
 fn tap_tweak(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> [u8; 32] {
     let x_only_bytes : [u8; 32]= internal_key.to_sec1_bytes()[1..].try_into().unwrap();
     let mut eng = TapTweakHash::engine();
