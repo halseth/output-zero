@@ -4,13 +4,17 @@ use bitcoin_hashes::Hash as BitcoinHash;
 use sha2::{Digest, Sha256, Sha512_256};
 
 use bitcoin::consensus::Encodable;
-use bitcoin::key::{Keypair};
+use bitcoin::key::{
+    Keypair, Parity, Secp256k1, TweakedPublicKey, UntweakedPublicKey, Verification,
+};
 use bitcoin::script::{Builder, PushBytes};
 use bitcoin::{
-    BlockHash, ScriptBuf, TapNodeHash, TapTweakHash, Transaction, WitnessVersion,
+    BlockHash, ScriptBuf, TapNodeHash, TapTweakHash, Transaction, Txid, WitnessVersion,
+    XOnlyPublicKey,
 };
 use k256::PublicKey;
 
+use musig2::k256::elliptic_curve::point::AffineCoordinates;
 use musig2::k256::elliptic_curve::sec1::ToEncodedPoint;
 use musig2::{k256, KeyAggContext};
 
