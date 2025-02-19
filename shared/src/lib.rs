@@ -128,10 +128,6 @@ fn secp_tap_tweak<C: Verification>(
     merkle_root: Option<TapNodeHash>,
 ) -> (XOnlyPublicKey, Parity) {
     let tweak_hash = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
-    println!(
-        "secp internal key: {}",
-        hex::encode(internal_key.serialize())
-    );
     println!("secp tweak hash: {}", tweak_hash);
     let tweak = tweak_hash.to_scalar();
 
