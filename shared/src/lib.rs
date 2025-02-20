@@ -13,6 +13,7 @@ use bitcoin::{
     XOnlyPublicKey,
 };
 use k256::PublicKey;
+use k256::ProjectivePoint;
 
 use musig2::k256::elliptic_curve::point::AffineCoordinates;
 use musig2::k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -138,30 +139,37 @@ fn secp_tap_tweak<C: Verification>(
     (output_key, parity)
 }
 
-fn tap_tweak(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> [u8; 32] {
+fn tap_tweak(internal_key: PublicKey, merkue_root: Option<TapNodeHash>) -> [u8; 32] {
     let x_only_bytes : [u8; 32]= internal_key.to_sec1_bytes()[1..].try_into().unwrap();
     let mut eng = TapTweakHash::engine();
     eng.input(&x_only_bytes);
     let tweak_hash = TapTweakHash::from_engine(eng);
 
 
-    let tweak_bytes = &tweak_hash.to_byte_array();
-    let tweak_point = k256::SecretKey::from_bytes(tweak_bytes.into())
-        .unwrap()
-        .public_key()
-        .to_projective();
+    let tweak_bytes = tweak_hash.to_byte_array();
 
-    let pub_point = internal_key.to_projective();
-    let pub_affine = internal_key.as_affine();
-    let tweaked_point = if pub_affine.y_is_odd().unwrap_u8() == 1 {
-        tweak_point - pub_point
-    } else {
-        pub_point + tweak_point
-    };
+    let tweaked_point = tweak_pubkey(internal_key, &tweak_bytes);
     let compressed = tweaked_point.to_encoded_point(true);
     let x_coordinate = compressed.x().unwrap();
 
     let pubx: [u8; 32] = x_coordinate.as_slice().try_into().unwrap();
 
     pubx
+}
+
+pub fn tweak_pubkey(pubkey: PublicKey, tweak_bytes: &[u8; 32]) -> ProjectivePoint {
+    let tweak_point = k256::SecretKey::from_bytes(tweak_bytes.into())
+        .unwrap()
+        .public_key()
+        .to_projective();
+
+    let pub_point = pubkey.to_projective();
+    let pub_affine = pubkey.as_affine();
+    let tweaked = if pub_affine.y_is_odd().unwrap_u8() == 1 {
+        tweak_point - pub_point
+    } else {
+        pub_point + tweak_point
+    };
+
+    tweaked
 }

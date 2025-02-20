@@ -25,6 +25,7 @@ fn main() {
     let s: Stump = env::read();
     let proof: Proof = env::read();
 
+    //let lh : [u8; 32] = env::read();
     let tx: Transaction = env::read();
     let vout: u32 = env::read();
     let block_height: u32 = env::read();
@@ -35,7 +36,6 @@ fn main() {
     let blind_secret_bytes: [u8; 32] = env::read();
     eprintln!("blind_secret_bytes: {}", hex::encode(blind_secret_bytes));
     let blind_secret = SecretKey::from_bytes(&blind_secret_bytes.into()).unwrap();
-    let blind = blind_secret.public_key();
     let tap_point = p_out.to_projective() + blind.to_projective();
     let tap_pub: PublicKey = tap_point.try_into().unwrap();
     eprintln!("tap blind key : {}", hex::encode(&tap_pub.to_sec1_bytes()));
