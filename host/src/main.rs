@@ -30,7 +30,10 @@ use shared::{get_leaf_hashes, tweak_pubkey};
 #[command(verbatim_doc_comment)]
 struct Args {
     #[arg(short, long, default_value_t = false)]
-    prove: bool,
+    verify: bool,
+
+    #[arg(short, long, default_value_t = false)]
+    derive: bool,
 
     #[arg(long)]
     proof_type: Option<String>,
@@ -61,7 +64,7 @@ struct Args {
     vout: Option<u32>,
 
     #[arg(long)]
-    bitcoin_key: Option<String>,
+    pubkey: Option<String>,
 
     #[arg(long)]
     blind_secret_hex: Option<String>,
@@ -110,18 +113,12 @@ fn main() {
 
     let args = Args::parse();
 
-    let receipt_file = if args.prove {
-        let r = File::create(args.receipt_file.unwrap()).unwrap();
-        r
-    } else {
-        let r = File::open(args.receipt_file.unwrap()).unwrap();
-        r
-    };
-
     // If not proving, simply verify the passed receipt using the loaded utxo set.
     let start_time = SystemTime::now();
-    if !args.prove {
-        let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
+    if args.verify{
+        let receipt_file = args.receipt_file.unwrap();
+        let r = File::open(receipt_file).unwrap();
+        let receipt: Receipt = bincode::deserialize_from(r).unwrap();
         verify_receipt(&receipt);
         println!("receipt verified in {:?}", start_time.elapsed().unwrap());
         return;
@@ -130,7 +127,7 @@ fn main() {
     let secp = Secp256k1::new();
     let network = args.network;
 
-    let pub_bitcoin = parse_pubkey(&args.bitcoin_key.unwrap());
+    let pub_bitcoin = parse_pubkey(&args.pubkey.unwrap());
     let blind_str = args.blind_secret_hex.unwrap();
     let blind_bytes: [u8; 32] = hex::decode(blind_str).unwrap().try_into().unwrap();
 
@@ -149,6 +146,10 @@ fn main() {
         hex::encode(&tap_blind_key.to_sec1_bytes())
     );
     address(&secp, tap_blind_key, network);
+
+    if args.derive {
+        return;
+    }
 
     let acc: CliStump = serde_json::from_str(&args.utreexo_acc.unwrap()).unwrap();
     let acc = Stump {
@@ -278,7 +279,9 @@ fn main() {
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
     println!("receipt ({}). seal size: {seal_size}.", receipt_bytes.len());
 
-    bincode::serialize_into(receipt_file, &receipt).unwrap();
+    let receipt_file = args.receipt_file.unwrap();
+    let r = File::create(receipt_file).unwrap();
+    bincode::serialize_into(r, &receipt).unwrap();
 }
 
 fn verify_receipt(receipt: &Receipt) {
