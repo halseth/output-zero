@@ -4,7 +4,7 @@ use risc0_zkvm::guest::env;
 use rustreexo::accumulator::node_hash::NodeHash;
 use rustreexo::accumulator::proof::Proof;
 use rustreexo::accumulator::stump::Stump;
-use sha2::{Digest, Sha512_256};
+use sha2::{Digest, Sha256};
 use bitcoin::{Transaction, BlockHash, XOnlyPublicKey};
 use k256::PublicKey;
 use k256::SecretKey;
@@ -76,7 +76,7 @@ fn main() {
     //hasher.update(&bitcoin_key2.to_sec1_bytes());
     //let pk_hash = hex::encode(hasher.finalize());
 
-    let mut shasher = Sha512_256::new();
+    let mut shasher = Sha256::new();
     s.serialize(&mut shasher).unwrap();
     let stump_hash = hex::encode(shasher.finalize());
 

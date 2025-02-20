@@ -1,7 +1,7 @@
 use bitcoin_hashes::HashEngine;
 use bitcoin_hashes::Hash as BitcoinHash;
 
-use sha2::{Digest, Sha256, Sha512_256};
+use sha2::{Digest, Sha256 };
 
 use bitcoin::consensus::Encodable;
 use bitcoin::key::{
@@ -44,7 +44,7 @@ pub fn get_leaf_hashes(
     let txid = compute_txid(&transaction);
     println!("txid: {txid}, block_hash: {block_hash} vout: {vout} height: {height}");
 
-    let leaf_hash = Sha512_256::new()
+    let leaf_hash = Sha256::new()
         .chain_update(UTREEXO_TAG_V1)
         .chain_update(UTREEXO_TAG_V1)
         .chain_update(block_hash)
