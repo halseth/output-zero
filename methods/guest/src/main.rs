@@ -9,7 +9,7 @@ use bitcoin::{Transaction, BlockHash, XOnlyPublicKey};
 use k256::PublicKey;
 use k256::SecretKey;
 
-use shared::{get_leaf_hashes, verify_musig, aggregate_keys, sort_pubkeys, new_p2tr};
+use shared::{get_leaf_hashes, verify_musig, aggregate_keys, sort_pubkeys, new_p2tr, tweak_pubkey};
 
 
 fn main() {
@@ -35,8 +35,16 @@ fn main() {
     let p_out: PublicKey = env::read();
     let blind_secret_bytes: [u8; 32] = env::read();
     eprintln!("blind_secret_bytes: {}", hex::encode(blind_secret_bytes));
-    let blind_secret = SecretKey::from_bytes(&blind_secret_bytes.into()).unwrap();
-    let tap_point = p_out.to_projective() + blind.to_projective();
+
+    // Blinding beta = h(r || P)
+    let beta: [u8; 32] = Sha256::new()
+        .chain_update(blind_secret_bytes)
+        .chain_update(p_out.to_sec1_bytes())
+        .finalize()
+        .try_into()
+        .unwrap();
+
+    let tap_point = tweak_pubkey(p_out, &beta);
     let tap_pub: PublicKey = tap_point.try_into().unwrap();
     eprintln!("tap blind key : {}", hex::encode(&tap_pub.to_sec1_bytes()));
    // let musig_sig_bytes: Vec<u8> = env::read();

@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 
 use k256::PublicKey;
 use musig2::{AggNonce, KeyAggContext, PartialSignature, SecNonce};
-use sha2::Digest;
-use shared::{aggregate_keys, get_leaf_hashes, sort_keypairs, sort_pubkeys, verify_musig};
+use sha2::{Digest, Sha256};
+use shared::{aggregate_keys, get_leaf_hashes, sort_keypairs, sort_pubkeys, tweak_pubkey, verify_musig};
 
 fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
     let sk = SecretKey::new(&mut rand::thread_rng());
@@ -233,7 +233,6 @@ fn main() {
     let blind_str = args.blind_secret.unwrap();
     println!("blind secret: {}", blind_str);
     let blind_bytes: [u8; 32] = hex::decode(blind_str).unwrap().try_into().unwrap();
-    let blind = k256::SecretKey::from_bytes(&blind_bytes.into()).unwrap();
 
     sort_keypairs(&mut keypairs);
 
@@ -255,8 +254,15 @@ fn main() {
     println!("tap key : {}", hex::encode(&tap_bytes));
     address(&secp, tap_key, network);
 
-    let blind_pub = blind.public_key();
-    let tap_blind_point = pub_bitcoin1.to_projective() + blind_pub.to_projective();
+    // Blinding beta = h(r || P)
+    let beta: [u8; 32] = Sha256::new()
+        .chain_update(blind_bytes)
+        .chain_update(pub_bitcoin1.to_sec1_bytes())
+        .finalize()
+        .try_into()
+        .unwrap();
+
+    let tap_blind_point = tweak_pubkey(pub_bitcoin1, &beta);
     let tap_blind_key: PublicKey = tap_blind_point.try_into().unwrap();
     println!(
         "tap blind key : {}",
