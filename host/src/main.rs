@@ -4,7 +4,6 @@ use std::fs::File;
 use methods::{METHOD_ELF, METHOD_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, Receipt};
 
-use bitcoin_hashes::sha256;
 use bitcoin_hashes::Hash as BitcoinHash;
 
 use clap::Parser;
@@ -14,28 +13,27 @@ use rustreexo::accumulator::stump::Stump;
 use std::str::FromStr;
 use std::time::SystemTime;
 
-use bitcoin::consensus::{deserialize};
-use bitcoin::key::Keypair;
-use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing};
-use bitcoin::{Address, BlockHash, Network, ScriptBuf, Transaction};
-use k256::schnorr;
+use bitcoin::consensus::deserialize;
+use bitcoin::secp256k1::{Secp256k1, Verification};
+use bitcoin::{Address, BlockHash, Network, ScriptBuf, TapTweakHash, Transaction, XOnlyPublicKey};
+use clap::builder::TypedValueParser;
 use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::proof::Proof;
 use serde::{Deserialize, Serialize};
 
-use shared::get_leaf_hashes;
-
-fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
-    let sk = SecretKey::new(&mut rand::thread_rng());
-    Keypair::from_secret_key(secp, &sk)
-}
+use k256::PublicKey;
+use sha2::{Digest, Sha256};
+use shared::{get_leaf_hashes, tweak_pubkey};
 
 /// utxozkp
 #[derive(Debug, Parser)]
 #[command(verbatim_doc_comment)]
 struct Args {
     #[arg(short, long, default_value_t = false)]
-    prove: bool,
+    verify: bool,
+
+    #[arg(short, long, default_value_t = false)]
+    derive: bool,
 
     #[arg(long)]
     proof_type: Option<String>,
@@ -65,14 +63,11 @@ struct Args {
     #[arg(long)]
     vout: Option<u32>,
 
-    /// Message to sign.
-    #[arg(short, long)]
-    msg: Option<String>,
-
-    /// Sign the message using the given private key. Pass "new" to generate one at random. Leave
-    /// this blank if verifying a receipt.
     #[arg(long)]
-    priv_key: Option<String>,
+    pubkey: Option<String>,
+
+    #[arg(long)]
+    blind_secret_hex: Option<String>,
 
     /// Network to use.
     #[arg(long, default_value_t = Network::Testnet)]
@@ -91,6 +86,25 @@ struct CliStump {
     pub leaves: u64,
 }
 
+fn parse_pubkey(pub_str: &str) -> PublicKey {
+    let pk_bytes = hex::decode(pub_str).unwrap();
+    let pk = PublicKey::from_sec1_bytes(&pk_bytes).unwrap();
+
+    println!("sec1 pub: {}", hex::encode(pk_bytes));
+
+    pk
+}
+
+fn address<C: Verification>(secp: &Secp256k1<C>, pubkey: PublicKey, network: Network) {
+    let pub_bytes: [u8; 32] = pubkey.to_sec1_bytes()[1..].try_into().unwrap();
+    let pubx = XOnlyPublicKey::from_slice(&pub_bytes).unwrap();
+
+    let script_buf = ScriptBuf::new_p2tr(&secp, pubx, None);
+    let addr = Address::from_script(script_buf.as_script(), network).unwrap();
+    println!("xonly pub: {}", pubx);
+    println!("address: {}", addr);
+}
+
 fn main() {
     // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
     tracing_subscriber::fmt()
@@ -99,48 +113,43 @@ fn main() {
 
     let args = Args::parse();
 
+    // If not proving, simply verify the passed receipt using the loaded utxo set.
+    let start_time = SystemTime::now();
+    if args.verify{
+        let receipt_file = args.receipt_file.unwrap();
+        let r = File::open(receipt_file).unwrap();
+        let receipt: Receipt = bincode::deserialize_from(r).unwrap();
+        verify_receipt(&receipt);
+        println!("receipt verified in {:?}", start_time.elapsed().unwrap());
+        return;
+    }
+
     let secp = Secp256k1::new();
     let network = args.network;
 
-    // Generate a new keypair or use the given private key.
-    let keypair = match args.priv_key.as_deref() {
-        Some(priv_str) => {
-            let keypair = if priv_str == "new" {
-                gen_keypair(&secp)
-            } else {
-                let sk = SecretKey::from_str(&priv_str).unwrap();
-                Keypair::from_secret_key(&secp, &sk)
-            };
+    let pub_bitcoin = parse_pubkey(&args.pubkey.unwrap());
+    let blind_str = args.blind_secret_hex.unwrap();
+    let blind_bytes: [u8; 32] = hex::decode(blind_str).unwrap().try_into().unwrap();
 
-            let (internal_key, _parity) = keypair.x_only_public_key();
-            let script_buf = ScriptBuf::new_p2tr(&secp, internal_key, None);
-            let addr = Address::from_script(script_buf.as_script(), network).unwrap();
-            println!("priv: {}", hex::encode(keypair.secret_key().secret_bytes()));
-            println!("pub: {}", internal_key);
-            println!("address: {}", addr);
+    // Blinding beta = h(r || P)
+    let beta: [u8; 32] = Sha256::new()
+        .chain_update(blind_bytes)
+        .chain_update(pub_bitcoin.to_sec1_bytes())
+        .finalize()
+        .try_into()
+        .unwrap();
 
-            if priv_str == "new" {
-                return;
-            }
+    let tap_blind_point = tweak_pubkey(pub_bitcoin, &beta);
+    let tap_blind_key: PublicKey = tap_blind_point.try_into().unwrap();
+    println!(
+        "blinded tap key : {}",
+        hex::encode(&tap_blind_key.to_sec1_bytes())
+    );
+    address(&secp, tap_blind_key, network);
 
-            Some(keypair)
-        }
-        _ => {
-            if args.prove {
-                println!("priv key needed");
-                return;
-            }
-            None
-        }
-    };
-
-    let receipt_file = if args.prove {
-        let r = File::create(args.receipt_file.unwrap()).unwrap();
-        r
-    } else {
-        let r = File::open(args.receipt_file.unwrap()).unwrap();
-        r
-    };
+    if args.derive {
+        return;
+    }
 
     let acc: CliStump = serde_json::from_str(&args.utreexo_acc.unwrap()).unwrap();
     let acc = Stump {
@@ -151,16 +160,6 @@ fn main() {
             .map(|root| NodeHash::from_str(&root).expect("invalid hash"))
             .collect(),
     };
-
-    let start_time = SystemTime::now();
-
-    // If not proving, simply verify the passed receipt using the loaded utxo set.
-    if !args.prove {
-        let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
-        verify_receipt(&receipt, &acc);
-        println!("receipt verified in {:?}", start_time.elapsed().unwrap());
-        return;
-    }
 
     let proof_type: ProverOpts = match args.proof_type.as_deref() {
         None => {
@@ -193,12 +192,6 @@ fn main() {
         }
     };
 
-    let msg_to_sign = args.msg.unwrap();
-    let msg_bytes = msg_to_sign.as_bytes();
-    let digest = sha256::Hash::hash(msg_bytes);
-    let digest_bytes = digest.to_byte_array();
-    let msg = Message::from_digest(digest_bytes);
-
     let proof: CliProof = serde_json::from_str(&args.utreexo_proof.unwrap()).unwrap();
     let proof = Proof {
         targets: proof.targets,
@@ -219,64 +212,35 @@ fn main() {
     let block_hash: BlockHash = BlockHash::from_str(&args.block_hash.unwrap()).unwrap();
 
     let lh = get_leaf_hashes(&tx, vout, block_height, block_hash);
-    println!("lh: {:?}", lh);
-
     let lh = NodeHash::from(lh);
 
     assert_eq!(lh, leaf_hash);
 
     // We will prove inclusion in the UTXO set of the key we control.
-    let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
-    let priv_bytes = keypair.unwrap().secret_key().secret_bytes();
-    let priv_key = schnorr::SigningKey::from_bytes(&priv_bytes).unwrap();
-    let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
+    let tap_bytes = tap_blind_key.to_sec1_bytes();
+    let internal_key = XOnlyPublicKey::from_slice(&tap_bytes[1..]).unwrap();
+    println!("xonly tap key: {}", hex::encode(internal_key.serialize()));
 
+    // Assume not tap tweak.
+    // TODO: add support for this.
+    let tweak_hash = TapTweakHash::from_key_and_tweak(internal_key, None);
+    println!("secp tweak hash: {}", tweak_hash);
+
+    // Sanity check the two p2tr implementation.
+    let script_pubkey = shared::secp_new_p2tr(&secp, internal_key, None);
+    let script_pub2 = shared::new_p2tr(tap_blind_key, None);
+    assert_eq!(script_pub2, script_pubkey);
     assert_eq!(tx.output[vout as usize].script_pubkey, script_pubkey);
 
     println!("proving {}", leaf_hash);
-    println!("proof: {:?}", proof);
     assert_eq!(acc.verify(&proof, &[leaf_hash]), Ok(true));
     println!("stump proof verified");
 
-    // Sign using the tweaked key.
-    let sig = secp.sign_schnorr(&msg, &keypair.unwrap());
-
-    // Verify signature.
-    let (pubkey, _) = keypair.unwrap().x_only_public_key();
-    println!("pubkey: {}", pubkey);
-
-    let sig_bytes = sig.serialize();
-    println!("secp signature: {}", hex::encode(sig_bytes));
-    secp.verify_schnorr(&sig, &msg, &pubkey)
-        .expect("secp verification failed");
-
-    let pub_bytes = pubkey.serialize();
-
-    println!("creating verifying key");
-    let verifying_key = schnorr::VerifyingKey::from_bytes(&pub_bytes).unwrap();
-    println!(
-        "created verifying key: {}",
-        hex::encode(verifying_key.to_bytes())
-    );
-
-    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
-    println!("schnorr signature: {}", hex::encode(schnorr_sig.to_bytes()));
-
-    verifying_key
-        .verify(msg_bytes, &schnorr_sig)
-        .expect("schnorr verification failed");
-
     let start_time = SystemTime::now();
     let env = ExecutorEnv::builder()
-        .write(&msg_bytes)
-        .unwrap()
-        .write(&priv_key)
-        .unwrap()
         .write(&acc)
         .unwrap()
         .write(&proof)
-        .unwrap()
-        .write(&sig_bytes.as_slice())
         .unwrap()
         .write(&tx)
         .unwrap()
@@ -286,6 +250,12 @@ fn main() {
         .unwrap()
         .write(&block_hash)
         .unwrap()
+        // Pubkey
+        .write(&pub_bitcoin)
+        .unwrap()
+        // Blinding secret
+        .write(&blind_bytes)
+        .unwrap()
         .build()
         .unwrap();
 
@@ -294,30 +264,47 @@ fn main() {
 
     // Proof information by proving the specified ELF binary.
     // This struct contains the receipt along with statistics about execution of the guest
-    let prove_info = prover.prove_with_opts(env, METHOD_ELF, &proof_type).unwrap();
+    let prove_info = prover
+        .prove_with_opts(env, METHOD_ELF, &proof_type)
+        .unwrap();
     println!("Proving took {:?}", start_time.elapsed().unwrap());
 
     // extract the receipt.
     let receipt = prove_info.receipt;
 
-    verify_receipt(&receipt, &acc);
+    verify_receipt(&receipt);
 
     let seal_size = receipt.seal_size();
 
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
     println!("receipt ({}). seal size: {seal_size}.", receipt_bytes.len());
 
-    bincode::serialize_into(receipt_file, &receipt).unwrap();
+    let receipt_file = args.receipt_file.unwrap();
+    let r = File::create(receipt_file).unwrap();
+    bincode::serialize_into(r, &receipt).unwrap();
 }
 
-fn verify_receipt(receipt: &Receipt, s: &Stump) {
-    let (receipt_stump, sk_hash, msg): (Stump, String, String) = receipt.journal.decode().unwrap();
+fn verify_receipt(receipt: &Receipt) {
+    let (pubkey, stump_hash): (PublicKey, String) = receipt.journal.decode().unwrap();
 
-    assert_eq!(&receipt_stump, s, "stumps not equal");
+    println!(
+        "unblinded pubkey: {}",
+        hex::encode(&pubkey.to_sec1_bytes())
+    );
+    println!("stump hash: {}", stump_hash);
 
-    // The receipt was verified at the end of proving, but the below code is an
-    // example of how someone else could verify this receipt.
     receipt.verify(METHOD_ID).unwrap();
-    println!("priv key hash: {}", sk_hash);
-    println!("signed msg: {}", msg);
+    println!("verified METHOD_ID={}", hex::encode(to_bytes(METHOD_ID)));
+}
+
+fn to_bytes(h: [u32; 8]) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    for i in 0..8 {
+        let b: [u8; 4] = h[i].to_be_bytes();
+        for j in 0..4 {
+            buf[i * 4 + j] = b[j];
+        }
+    }
+
+    buf
 }

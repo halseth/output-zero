@@ -1,10 +1,23 @@
-use bitcoin_hashes::sha256;
+use bitcoin_hashes::HashEngine;
 use bitcoin_hashes::Hash as BitcoinHash;
 
-use sha2::{Digest, Sha512_256};
+use sha2::{Digest, Sha256 };
 
 use bitcoin::consensus::Encodable;
-use bitcoin::{BlockHash, Transaction};
+use bitcoin::key::{
+    Parity, Secp256k1, UntweakedPublicKey, Verification,
+};
+use bitcoin::script::{Builder, PushBytes};
+use bitcoin::{
+    BlockHash, ScriptBuf, TapNodeHash, TapTweakHash, Transaction, Txid, WitnessVersion,
+    XOnlyPublicKey,
+};
+use k256::PublicKey;
+use k256::ProjectivePoint;
+
+use musig2::k256::elliptic_curve::point::AffineCoordinates;
+use musig2::k256::elliptic_curve::sec1::ToEncodedPoint;
+use musig2::k256;
 
 pub const UTREEXO_TAG_V1: [u8; 64] = [
     0x5b, 0x83, 0x2d, 0xb8, 0xca, 0x26, 0xc2, 0x5b, 0xe1, 0xc5, 0x42, 0xd6, 0xcc, 0xed, 0xdd, 0xa8,
@@ -18,7 +31,7 @@ pub fn get_leaf_hashes(
     vout: u32,
     height: u32,
     block_hash: BlockHash,
-) -> sha256::Hash {
+) -> [u8; 32] {
     let header_code = height << 1;
 
     let mut ser_utxo = Vec::new();
@@ -29,10 +42,10 @@ pub fn get_leaf_hashes(
     } else {
         header_code
     };
-    let txid = transaction.compute_txid();
+    let txid = compute_txid(&transaction);
     println!("txid: {txid}, block_hash: {block_hash} vout: {vout} height: {height}");
 
-    let leaf_hash = Sha512_256::new()
+    let leaf_hash = Sha256::new()
         .chain_update(UTREEXO_TAG_V1)
         .chain_update(UTREEXO_TAG_V1)
         .chain_update(block_hash)
@@ -41,5 +54,100 @@ pub fn get_leaf_hashes(
         .chain_update(header_code.to_le_bytes())
         .chain_update(ser_utxo)
         .finalize();
-    sha256::Hash::from_slice(leaf_hash.as_slice()).expect("parent_hash: Engines shouldn't be Err")
+    leaf_hash.try_into().unwrap()
+}
+
+pub fn compute_txid(tx: &Transaction) -> Txid {
+    let mut enc = Vec::new();
+    tx.version.consensus_encode(&mut enc).expect("engines don't error");
+    tx.input.consensus_encode(&mut enc).expect("engines don't error");
+    tx.output.consensus_encode(&mut enc).expect("engines don't error");
+    tx.lock_time.consensus_encode(&mut enc).expect("engines don't error");
+
+    // Compute double SHA-256 hash
+    let hash_result = Sha256::digest(Sha256::digest(&enc));
+
+    // Convert the hash result to a Txid
+    Txid::from_slice(&hash_result).expect("hash should be valid Txid")
+}
+
+
+pub fn new_p2tr(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> ScriptBuf {
+    let output_key = tap_tweak(internal_key, merkle_root);
+    // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
+    new_witness_program_unchecked(WitnessVersion::V1, output_key)
+}
+
+fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
+    version: WitnessVersion,
+    program: T,
+) -> ScriptBuf {
+    let program = program.as_ref();
+    debug_assert!(program.len() >= 2 && program.len() <= 40);
+    // In segwit v0, the program must be 20 or 32 bytes long.
+    debug_assert!(version != WitnessVersion::V0 || program.len() == 20 || program.len() == 32);
+    Builder::new()
+        .push_opcode(version.into())
+        .push_slice(program)
+        .into_script()
+}
+
+pub fn secp_new_p2tr<C: Verification>(
+    secp: &Secp256k1<C>,
+    internal_key: UntweakedPublicKey,
+    merkle_root: Option<TapNodeHash>,
+) -> ScriptBuf {
+    let (output_key, _) = secp_tap_tweak(internal_key, secp, merkle_root);
+    // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
+    new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
+}
+fn secp_tap_tweak<C: Verification>(
+    internal_key: UntweakedPublicKey,
+    secp: &Secp256k1<C>,
+    merkle_root: Option<TapNodeHash>,
+) -> (XOnlyPublicKey, Parity) {
+    let tweak_hash = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
+    println!("secp tweak hash: {}", tweak_hash);
+    let tweak = tweak_hash.to_scalar();
+
+    let (output_key, parity) = internal_key
+        .add_tweak(secp, &tweak)
+        .expect("Tap tweak failed");
+
+    (output_key, parity)
+}
+
+fn tap_tweak(internal_key: PublicKey, merkue_root: Option<TapNodeHash>) -> [u8; 32] {
+    let x_only_bytes : [u8; 32]= internal_key.to_sec1_bytes()[1..].try_into().unwrap();
+    let mut eng = TapTweakHash::engine();
+    eng.input(&x_only_bytes);
+    let tweak_hash = TapTweakHash::from_engine(eng);
+
+
+    let tweak_bytes = tweak_hash.to_byte_array();
+
+    let tweaked_point = tweak_pubkey(internal_key, &tweak_bytes);
+    let compressed = tweaked_point.to_encoded_point(true);
+    let x_coordinate = compressed.x().unwrap();
+
+    let pubx: [u8; 32] = x_coordinate.as_slice().try_into().unwrap();
+
+    pubx
+}
+
+pub fn tweak_pubkey(pubkey: PublicKey, tweak_bytes: &[u8; 32]) -> ProjectivePoint {
+    let tweak_point = k256::SecretKey::from_bytes(tweak_bytes.into())
+        .unwrap()
+        .public_key()
+        .to_projective();
+
+    let pub_point = pubkey.to_projective();
+    let pub_affine = pubkey.as_affine();
+    let tweaked = if pub_affine.y_is_odd().unwrap_u8() == 1 {
+        tweak_point - pub_point
+    } else {
+        pub_point + tweak_point
+    };
+
+    tweaked
 }
