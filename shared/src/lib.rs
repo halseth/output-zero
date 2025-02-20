@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256 };
 
 use bitcoin::consensus::Encodable;
 use bitcoin::key::{
-    Keypair, Parity, Secp256k1, TweakedPublicKey, UntweakedPublicKey, Verification,
+    Parity, Secp256k1, UntweakedPublicKey, Verification,
 };
 use bitcoin::script::{Builder, PushBytes};
 use bitcoin::{
@@ -17,7 +17,7 @@ use k256::ProjectivePoint;
 
 use musig2::k256::elliptic_curve::point::AffineCoordinates;
 use musig2::k256::elliptic_curve::sec1::ToEncodedPoint;
-use musig2::{k256, KeyAggContext};
+use musig2::k256;
 
 pub const UTREEXO_TAG_V1: [u8; 64] = [
     0x5b, 0x83, 0x2d, 0xb8, 0xca, 0x26, 0xc2, 0x5b, 0xe1, 0xc5, 0x42, 0xd6, 0xcc, 0xed, 0xdd, 0xa8,
@@ -71,29 +71,7 @@ pub fn compute_txid(tx: &Transaction) -> Txid {
     Txid::from_slice(&hash_result).expect("hash should be valid Txid")
 }
 
-pub fn aggregate_keys(pubs: Vec<PublicKey>) -> PublicKey {
-    let key_agg_ctx = KeyAggContext::new(pubs.clone()).unwrap();
-    let aggregated_pubkey: PublicKey = key_agg_ctx.aggregated_pubkey();
 
-    aggregated_pubkey
-}
-
-pub fn verify_musig(pubs: Vec<PublicKey>, sig: [u8; 64], message: &Vec<u8>) -> bool {
-    let aggregated_pubkey: PublicKey = aggregate_keys(pubs);
-
-    musig2::verify_single(aggregated_pubkey, &sig, message)
-        .expect("aggregated signature must be valid");
-
-    true
-}
-
-pub fn sort_pubkeys(pubkeys: &mut Vec<PublicKey>) {
-    pubkeys.sort_by(|a, b| a.to_sec1_bytes().cmp(&b.to_sec1_bytes()));
-}
-
-pub fn sort_keypairs(kp: &mut Vec<Keypair>) {
-    kp.sort_by(|a, b| a.public_key().serialize().cmp(&b.public_key().serialize()));
-}
 pub fn new_p2tr(internal_key: PublicKey, merkle_root: Option<TapNodeHash>) -> ScriptBuf {
     let output_key = tap_tweak(internal_key, merkle_root);
     // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
